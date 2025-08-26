@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>RUKÉ • Godmode IDE (Tailwind + Mithril + Monaco)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { colors: { bg:'#0b1220', panel:'#0c1426', border:'#1b2945', accent:'#2f7af8' }}}}
+  </script>
+  <!-- Mithril -->
+  <script src="https://unpkg.com/mithril/mithril.min.js"></script>
+  <!-- Monaco -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+  <!-- xterm (for terminal UI) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.min.js"></script>
+  <!-- WebContainers (Node in browser). Will only boot if crossOriginIsolated -->
+  <script type="module" id="wc-loader">
+    import { WebContainer } from 'https://cdn.jsdelivr.net/npm/@webcontainer/api/dist/webcontainer.js';
+    window.__WebContainer = WebContainer;
+  </script>
+  <style>
+    html,body { height:100% }
+    body { background:#0a0f1a; color:#e6eaf2; }
+    .btn { @apply px-3 py-2 rounded-lg border border-border hover:border-accent transition; }
+    .glass { background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); backdrop-filter: blur(8px); }
+    .dragover { outline:2px dashed #2f7af8; outline-offset: -6px; }
+    .scrollbar::-webkit-scrollbar { width:10px; height:10px }
+    .scrollbar::-webkit-scrollbar-thumb{ background:#27324a; border-radius:999px }
+  </style>
+</head>
+<body class="h-full">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-20 bg-[#0b1220cc] backdrop-blur border-b border-border">
+    <div class="max-w-[1400px] mx-auto px-4 py-3 flex items-center gap-3">
+      <div class="flex items-center gap-2">
+        <!-- logo -->
+        <div class="w-8 h-8 rounded-full bg-gradient-to-b from-slate-700 to-slate-900 border border-white/10"></div>
+        <div class="font-semibold tracking-wide">RUKÉ • Godmode IDE</div>
+        <span class="ml-2 px-2 py-0.5 rounded-full text-xs bg-green-600/20 border border-green-600/40">Online</span>
+      </div>
+      <div class="ml-auto flex items-center gap-2">
+        <button id="saveAllBtn" class="btn">💾 Save All</button>
+        <button id="formatBtn" class="btn">✨ Format</button>
+        <button id="clearBtn" class="btn border-red-700 text-red-300 hover:border-red-500">🗑 Clear Project</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="max-w-[1400px] mx-auto px-4 py-3 grid grid-cols-[280px_minmax(0,1fr)_420px] gap-3">
+    <!-- Sidebar: Files & API Keys -->
+    <aside class="glass rounded-2xl p-3 flex flex-col min-h-[78vh]">
+      <div class="flex items-center justify-between">
+        <div class="uppercase text-xs text-slate-300 tracking-widest">Project</div>
+        <div class="flex gap-2">
+          <button id="newFileBtn" class="btn">➕ File</button>
+          <button id="newFolderBtn" class="btn">📁 Folder</button>
+        </div>
+      </div>
+
+      <!-- File Tree -->
+      <div id="fileTree" class="mt-3 flex-1 overflow-auto scrollbar text-sm"></div>
+
+      <!-- API Harness -->
+      <div class="mt-3 border-t border-border pt-3">
+        <div class="uppercase text-xs text-slate-300 tracking-widest mb-2">API Harness</div>
+        <label class="block text-xs mb-1">Gemini API Key</label>
+        <input id="geminiKey" type="password" class="w-full bg-[#0d1425] border border-border rounded-lg px-3 py-2" placeholder="Paste your key (stored locally)" />
+        <div class="flex gap-2 mt-2">
+          <button id="saveKeyBtn" class="btn">🔐 Save</button>
+          <button id="testGeminiBtn" class="btn">🤖 Test</button>
+        </div>
+        <p class="text-xs text-slate-400 mt-2">Keys are saved only in your browser (localStorage).</p>
+      </div>
+    </aside>
+
+    <!-- Center: Editor + Tabs -->
+    <section class="glass rounded-2xl grid grid-rows-[42px_minmax(0,1fr)_200px] overflow-hidden">
+      <!-- Tabs -->
+      <div class="flex items-center gap-2 px-2 border-b border-border">
+        <div class="flex gap-2 overflow-auto" id="tabStrip"></div>
+        <div class="ml-auto flex items-center gap-2">
+          <button id="runClientBtn" class="btn">🚀 Client Preview</button>
+          <button id="runNodeBtn" class="btn">🟢 Start Node</button>
+        </div>
+      </div>
+
+      <!-- Monaco -->
+      <div id="editor" class="min-h-[420px]"></div>
+
+      <!-- Terminal -->
+      <div class="border-t border-border bg-[#0a101e]">
+        <div class="flex items-center justify-between px-2 py-1">
+          <div class="text-xs text-slate-300">Terminal</div>
+          <div class="flex gap-2">
+            <button id="openStackBlitz" class="btn">⚡ Open in StackBlitz</button>
+            <button id="clearTermBtn" class="btn">🧹 Clear</button>
+          </div>
+        </div>
+        <div id="terminal" class="h-[160px]"></div>
+        <div id="terminalHint" class="text-xs text-slate-400 px-3 py-1 hidden">
+          WebContainers need COOP/COEP headers. Host this file with those headers to enable real Node.js in the browser.
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: Live Preview & Chat -->
+    <aside class="glass rounded-2xl p-3 grid grid-rows-[1fr_280px] gap-3 min-h-[78vh]">
+      <div class="rounded-xl overflow-hidden border border-border relative">
+        <div class="absolute top-0 left-0 right-0 flex items-center justify-between bg-[#0b1220] border-b border-border px-2 py-1 text-xs">
+          <span id="previewTitle">Preview</span>
+          <div class="flex gap-2">
+            <button id="refreshPreviewBtn" class="btn py-1">🔄</button>
+            <button id="openPreviewBtn" class="btn py-1">🧭 Open</button>
+          </div>
+        </div>
+        <iframe id="preview" class="w-full h-full pt-6 bg-white"></iframe>
+      </div>
+
+      <!-- Gemini Mini Chat (example) -->
+      <div class="rounded-xl border border-border overflow-hidden">
+        <div class="px-3 py-2 text-xs border-b border-border bg-[#0b1220]">Gemini Mini Chat (free models)</div>
+        <div id="chatLog" class="h-[190px] overflow-auto p-2 text-sm space-y-2"></div>
+        <div class="flex gap-2 p-2 border-t border-border">
+          <input id="chatInput" class="flex-1 bg-[#0d1425] border border-border rounded-lg px-3 py-2 text-sm" placeholder="Ask Gemini (uses your key)…">
+          <button id="chatSendBtn" class="btn">📨</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script>
+    // ---------- Utilities ----------
+    const store = {
+      get: (k, def) => { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch { return def; } },
+      set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
+      del: (k) => localStorage.removeItem(k)
+    };
+    const debounce = (fn, t=300) => { let id; return (...a)=>{ clearTimeout(id); id=setTimeout(()=>fn(...a),t);} };
+
+    // ---------- Project FS (localStorage) ----------
+    const DEFAULT_FILES = {
+      "index.html": `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Client Preview</title>
+  <style>body{font-family:sans-serif;padding:20px} .ok{color:green}</style>
+</head>
+<body>
+  <h1 class="ok">Hello Client Preview 👋</h1>
+  <p>Edit <code>index.html</code> and click “Client Preview”.</p>
+  <script>console.log("Client JS running")
+  
+      "app.js": `document.body.insertAdjacentHTML('beforeend', '<p>app.js loaded ✅</p>');`,
+      "server.js": `import http from 'http';
+const server = http.createServer((req,res)=>{ res.end('Hello from Node.js in the browser (WebContainers)'); });
+server.listen(3000);`,
+      "package.json": `{
+  "name": "ruke-godmode",
+  "type": "module",
+  "scripts": { "start": "node server.js" }
+}`
+    };
+
+    let project = store.get('ruke_project', DEFAULT_FILES);
+    let openFiles = store.get('ruke_openFiles', ['index.html']);
+    let activeFile = store.get('ruke_activeFile', 'index.html');
+
+    function saveProject() {
+      store.set('ruke_project', project);
+      store.set('ruke_openFiles', openFiles);
+      store.set('ruke_activeFile', activeFile);
+    }
+
+    // ---------- API Harness ----------
+    const API_KEYS = store.get('ruke_api_keys', { gemini: "" });
+    const setKey = (name, value) => { API_KEYS[name]=value; store.set('ruke_api_keys', API_KEYS); }
+
+    // ---------- Gemini (free models) ----------
+    async function geminiChat(text) {
+      const key = API_KEYS.gemini;
+      if(!key) throw new Error("Gemini key missing");
+      // example uses free models (as of now)
+      const model = "models/gemini-1.5-flash-latest";
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${encodeURIComponent(key)}`;
+      const body = {
+        contents: [{ role: "user", parts: [{ text }] }]
+      };
+      const res = await fetch(endpoint, { method: "POST", headers: { "Content-Type":"application/json" }, body: JSON.stringify(body) });
+      const data = await res.json();
+      if (data?.candidates?.[0]?.content?.parts?.[0]?.text) return data.candidates[0].content.parts[0].text;
+      if (data?.error?.message) throw new Error(data.error.message);
+      throw new Error("No valid response");
+    }
+
+    // ---------- Monaco ----------
+    let editor;
+    function initMonaco() {
+      window.require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' }});
+      window.require(['vs/editor/editor.main'], () => {
+        editor = monaco.editor.create(document.getElementById('editor'), {
+          value: project[activeFile] || "",
+          language: langFromFilename(activeFile),
+          automaticLayout: true,
+          theme: 'vs-dark',
+          fontLigatures: true,
+          fontSize: 14,
+          minimap: { enabled: true }
+        });
+        editor.onDidChangeModelContent(debounce(() => {
+          if (!activeFile) return;
+          project[activeFile] = editor.getValue();
+          saveProject();
+        }, 300));
+      });
+    }
+    function langFromFilename(name) {
+      if (name.endsWith('.js')) return 'javascript';
+      if (name.endsWith('.ts')) return 'typescript';
+      if (name.endsWith('.css')) return 'css';
+      if (name.endsWith('.json')) return 'json';
+      if (name.endsWith('.md')) return 'markdown';
+      if (name.endsWith('.html')) return 'html';
+      return 'plaintext';
+    }
+
+    // ---------- Tabs ----------
+    function setActiveFile(name) {
+      if (!project[name]) return;
+      activeFile = name;
+      if (editor) {
+        const model = monaco.editor.createModel(project[name], langFromFilename(name));
+        editor.setModel(model);
+      }
+      if (!openFiles.includes(name)) openFiles.push(name);
+      saveProject(); m.redraw();
+    }
+    function closeTab(name) {
+      openFiles = openFiles.filter(f => f!==name);
+      if (activeFile===name) activeFile = openFiles[0] || Object.keys(project)[0];
+      saveProject(); setActiveFile(activeFile);
+    }
+
+    // ---------- File CRUD ----------
+    function createFile(name, isFolder=false) {
+      if (project[name]) return alert('File already exists');
+      if (isFolder && !name.endsWith('/')) name += '/';
+      project[name] = isFolder ? null : '';
+      saveProject(); m.redraw();
+    }
+    function deleteFile(name) {
+      if (!confirm(`Delete "${name}"?`)) return;
+      if (name.endsWith('/')) {
+        // delete folder & children
+        Object.keys(project).forEach(k => { if (k.startsWith(name)) delete project[k]; });
+      } else {
+        delete project[name];
+        if (openFiles.includes(name)) closeTab(name);
+      }
+      if (!project[activeFile]) activeFile = Object.keys(project)[0] || null;
+      saveProject(); m.redraw();
+    }
+    function renameFile(oldName, newName) {
+      if (!newName || project[newName]) return alert('Invalid name or already exists');
+      const isFolder = oldName.endsWith('/');
+      if (isFolder) {
+        // move folder subtree
+        const keys = Object.keys(project).filter(k => k.startsWith(oldName));
+        keys.forEach(k => {
+          const repl = newName + k.slice(oldName.length);
+          project[repl] = project[k];
+          delete project[k];
+        });
+      } else {
+        project[newName] = project[oldName];
+        delete project[oldName];
+        const oi = openFiles.indexOf(oldName);
+        if (oi>-1) openFiles[oi] = newName;
+        if (activeFile===oldName) activeFile = newName;
+      }
+      saveProject(); m.redraw();
+    }
+
+    // ---------- Client Preview ----------
+    let previewURL = null;
+    function runClientPreview() {
+      try { URL.revokeObjectURL(previewURL); } catch{}
+      // simple project packer: if index.html exists, build Blob w/ content & Data URLs for others
+      // naive replacement for etc. stays same (served by iframe origin), so we inline all files if referenced is tricky.
+      // Simpler: create a Zip-like virtual FS using a service URL? For now, we just use index.html content.
+      const html = project['index.html'] ?? '<h1>No index.html</h1>';
+      const blob = new Blob([html], { type: 'text/html' });
+      previewURL = URL.createObjectURL(blob);
+      const iframe = document.getElementById('preview');
+      iframe.src = previewURL;
+      document.getElementById('previewTitle').textContent = 'Client Preview (index.html)';
+    }
+
+    // ---------- Node (WebContainers) ----------
+    let webc = null;
+    let term, termWriter;
+    async function ensureTerminal() {
+      if (!term) {
+        term = new Terminal({ theme: { background: '#0a101e' } });
+        term.open(document.getElementById('terminal'));
+      }
+      return term;
+    }
+    function writeTerm(line="") {
+      if (!term) return;
+      term.write(line.replace(/\n/g, '\r\n'));
+    }
+
+    async function startNode() {
+      const hint = document.getElementById('terminalHint');
+      await ensureTerminal();
+      term.clear();
+
+      if (!window.crossOriginIsolated || !window.__WebContainer) {
+        hint.classList.remove('hidden');
+        writeTerm('\r\nWebContainers need COOP/COEP headers.\r\nUse the ⚡ StackBlitz button to run Node immediately.\r\n');
+        return;
+      }
+      hint.classList.add('hidden');
+
+      try {
+        if (!webc) {
+          webc = await window.__WebContainer.boot();
+          writeTerm('Booted WebContainer...\r\n');
+        }
+        // sync project to WC FS
+        // Create directories and files
+        for (const [path, content] of Object.entries(project)) {
+          if (path.endsWith('/')) {
+            await webc.fs.mkdir(path).catch(()=>{});
+          } else {
+            // ensure parent dirs
+            const parts = path.split('/'); parts.pop();
+            let cur = '';
+            for (const p of parts) {
+              cur += p + '/';
+              await webc.fs.mkdir(cur).catch(()=>{});
+            }
+            await webc.fs.writeFile(path, content ?? '');
+          }
+        }
+
+        // Install deps if package.json exists (noop if none)
+        if (project['package.json']) {
+          writeTerm('Installing (if any)... this may take a moment...\r\n');
+          const install = await webc.spawn('npm', ['install']);
+          await pipeProcess(install);
+        }
+
+        // start server
+        writeTerm('Starting: npm start\r\n');
+        const proc = await webc.spawn('npm', ['start']);
+        pipeProcess(proc);
+
+        // open server on 3000
+        webc.on('server-ready', (port, url) => {
+          writeTerm(`Server ready on ${url}\r\n`);
+          const iframe = document.getElementById('preview');
+          iframe.src = url;
+          document.getElementById('previewTitle').textContent = `Node Preview (${url})`;
+        });
+
+      } catch (e) {
+        writeTerm(`\r\nError: ${e.message}\r\n`);
+      }
+    }
+
+    async function pipeProcess(proc) {
+      const reader = proc.output.getReader();
+      (async () => {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          writeTerm(value);
+        }
+      })();
+      return await proc.exit;
+    }
+
+    // ---------- StackBlitz fallback ----------
+    function openInStackBlitz() {
+      // Create a minimal project spec for stackblitz.com/fork
+      // NOTE: This opens in a new tab with real Node + terminal.
+      const spec = {
+        files: { ...project },
+        title: 'RUKÉ Godmode IDE',
+        description: 'Mithril + Tailwind + Monaco + WebContainers (StackBlitz fallback)',
+        template: 'node'
+      };
+      const blob = new Blob([JSON.stringify(spec)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      // StackBlitz supports ?project=URL
+      window.open(`https://stackblitz.com/fork/node?project=${encodeURIComponent(url)}`, '_blank');
+    }
+
+    // ---------- Mithril Components ----------
+    const FileTree = {
+      view: () => {
+        const entries = Object.keys(project).sort((a,b)=> a.localeCompare(b, undefined, { sensitivity:'base' }));
+        // simple flat list; show folders first
+        const folders = entries.filter(e=>e.endsWith('/'));
+        const files = entries.filter(e=>!e.endsWith('/'));
+        const row = (name, isFolder=false) => m('div.flex items-center justify-between group',
+          { class:'px-2 py-1 rounded hover:bg-white/5 cursor-pointer'},
+          [
+            m('div.flex items-center gap-2', {
+              onclick: () => { if(!isFolder){ setActiveFile(name); } }
+            },
+              isFolder
+                ? m('span', '📁')
+                : m('span', '📄'),
+              m('span', { class: isFolder ? 'font-semibold' : '' }, name)
+            ),
+            m('div.opacity-0 group-hover:opacity-100 transition flex gap-1',
+              [
+                m('button.btn py-1', { onclick: (e)=>{ e.stopPropagation();
+                  const nn = prompt('Rename to:', name);
+                  if (nn && nn!==name) renameFile(name, nn);
+                }}, '✏️'),
+                m('button.btn py-1 border-red-700 text-red-300 hover:border-red-500', { onclick: (e)=>{ e.stopPropagation(); deleteFile(name); }}, '🗑️')
+              ])
+          ]);
+        return m('div space-y-1',
+          folders.map(f => row(f, true)).concat(files.map(f => row(f, false))));
+      }
+    };
+
+    const Tabs = {
+      view: () => m('div.flex gap-1 py-1',
+        openFiles.map(f => m('div.flex items-center gap-2 px-2 py-1 rounded border border-border',
+          {
+            class: activeFile===f ? 'bg-[#16213a]' : 'bg-transparent hover:bg-white/5',
+            onclick: () => setActiveFile(f)
+          },
+          [
+            m('span', f.endsWith('.js')?'🟨': f.endsWith('.html')?'🟥': f.endsWith('.css')?'🟦':'📄'),
+            m('span.text-sm', f),
+            m('button.ml-2 text-xs', { onclick:(e)=>{ e.stopPropagation(); closeTab(f); }}, '✖')
+          ]
+        ))
+      )
+    };
+
+    // ---------- Mount UI ----------
+    m.mount(document.getElementById('fileTree'), FileTree);
+    m.mount(document.getElementById('tabStrip'), Tabs);
+    initMonaco();
+
+    // ---------- Wire up actions ----------
+    document.getElementById('newFileBtn').onclick = () => {
+      const name = prompt('New file name:', 'script.js');
+      if (!name) return;
+      createFile(name, false);
+      setActiveFile(name);
+    };
+    document.getElementById('newFolderBtn').onclick = () => {
+      const name = prompt('New folder name:', 'src/');
+      if (!name) return;
+      createFile(name, true);
+    };
+    document.getElementById('saveAllBtn').onclick = () => {
+      if (editor && activeFile) project[activeFile] = editor.getValue();
+      saveProject();
+      alert('Saved.');
+    };
+    document.getElementById('formatBtn').onclick = () => {
+      // Monaco simple format (best effort for HTML/JS)
+      if (!editor) return;
+      editor.getAction('editor.action.formatDocument')?.run();
+    };
+    document.getElementById('clearBtn').onclick = () => {
+      if (!confirm('Clear current project and restore defaults?')) return;
+      project = { ...DEFAULT_FILES };
+      openFiles = ['index.html'];
+      activeFile = 'index.html';
+      saveProject();
+      setActiveFile('index.html');
+      m.redraw();
+    };
+
+    // Preview buttons
+    document.getElementById('runClientBtn').onclick = runClientPreview;
+    document.getElementById('refreshPreviewBtn').onclick = () => {
+      const iframe = document.getElementById('preview');
+      iframe.src = iframe.src; // reload
+    };
+    document.getElementById('openPreviewBtn').onclick = () => {
+      if (!previewURL) runClientPreview();
+      window.open(previewURL, '_blank');
+    };
+
+    // Node buttons
+    document.getElementById('runNodeBtn').onclick = startNode;
+    document.getElementById('clearTermBtn').onclick = async () => { await ensureTerminal(); term.clear(); };
+    document.getElementById('openStackBlitz').onclick = openInStackBlitz;
+
+    // API keys & Gemini
+    document.getElementById('geminiKey').value = API_KEYS.gemini || '';
+    document.getElementById('saveKeyBtn').onclick = () => {
+      const v = document.getElementById('geminiKey').value.trim();
+      setKey('gemini', v);
+      alert('Key saved locally.');
+    };
+    document.getElementById('testGeminiBtn').onclick = async () => {
+      const out = document.getElementById('chatLog');
+      out.innerHTML += `<div>➡️ <em>Testing Gemini…</em></div>`;
+      try {
+        const txt = await geminiChat('Say hi in one short sentence.');
+        out.innerHTML += `<div>🤖 ${escapeHtml(txt)}</div>`;
+      } catch (e) {
+        out.innerHTML += `<div class="text-red-300">⚠️ ${escapeHtml(e.message)}</div>`;
+      }
+      out.scrollTop = out.scrollHeight;
+    };
+    document.getElementById('chatSendBtn').onclick = async () => {
+      const input = document.getElementById('chatInput');
+      const out = document.getElementById('chatLog');
+      const q = input.value.trim();
+      if (!q) return;
+      out.innerHTML += `<div>🧑 ${escapeHtml(q)}</div>`;
+      input.value = '';
+      try {
+        const txt = await geminiChat(q);
+        out.innerHTML += `<div>🤖 ${escapeHtml(txt)}</div>`;
+      } catch (e) {
+        out.innerHTML += `<div class="text-red-300">⚠️ ${escapeHtml(e.message)}</div>`;
+      }
+      out.scrollTop = out.scrollHeight;
+    };
+
+    function escapeHtml(s){ return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) }
+
+    // First run
+    setActiveFile(activeFile);
+    runClientPreview();
+    ensureTerminal().then(()=>{
+      if (!window.crossOriginIsolated) {
+        document.getElementById('terminalHint').classList.remove('hidden');
+        writeTerm('Terminal ready (UI). Start Node requires COOP/COEP.\r\n');
+      }
+    });
+  </script>
+
+  <!-- ===== How to host with COOP/COEP (to enable Node in browser) =====
+  Serve with headers:
+    Cross-Origin-Opener-Policy: same-origin
+    Cross-Origin-Embedder-Policy: require-corp
+  Examples:
+  - GitHub Pages: unsupported (no custom headers).
+  - Netlify / Vercel: add headers file to set COOP/COEP.
+  - Any NGINX/Apache: set the two headers on this route.
+  Once set, the “🟢 Start Node” button will boot WebContainers.
+  -->
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "ai-ide-sandbox",
+  "type": "module",
+  "scripts": {
+    "start": "vercel dev"
+  },
+  "dependencies": {}
+}

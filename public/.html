@@ -1,0 +1,1179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>RUKÉ — Ultra God IDE (Mithril • Tailwind • CodeMirror • xterm.js)</title>
+
+  <!-- Tailwind (CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Mithril (CDN) -->
+  <script src="https://unpkg.com/mithril/mithril.js"></script>
+
+  <!-- CodeMirror 5 (CDN) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closebrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+
+  <!-- xterm.js (CDN) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.1.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.1.0/lib/xterm.js"></script>
+
+  <!-- JSZip for export ZIP (optional) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    /* Minimal extra styles for polish */
+    html,body,#app { height: 100%; margin: 0; }
+    body {
+      background: linear-gradient(180deg,#071027,#041025);
+      color: #e6eef6;
+      font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    .glass { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04); border-radius: 10px; }
+    .btn { @apply inline-flex items-center gap-2 px-3 py-1 rounded-md bg-[rgba(255,255,255,0.02)] border border-[rgba(255,255,255,0.04)]; }
+    .file-row { padding: .5rem; border-radius: .5rem; display:flex; justify-content:space-between; align-items:center; gap:.5rem; }
+    .file-row:hover { background: rgba(255,255,255,0.02); }
+    .file-row.active { background: rgba(47,122,248,0.10); }
+    .cm-s-material-darker.CodeMirror { height: 100%; font-size: 13px; }
+    .preview-frame { width:100%; height:100%; border:0; background:white; border-radius:6px; }
+    .console { background:#061225; padding:.65rem; border-radius:8px; font-family: ui-monospace, monospace; font-size:13px; color:#cfe9ff; height:12rem; overflow:auto; }
+    .small { font-size:12px; color:#9fb1d1; }
+    .icon { width:18px; height:18px; display:inline-block; }
+    /* responsive tweaks */
+    @media (max-width: 1024px) {
+      .hide-md { display:none; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app" class="h-full p-4 max-w-[1400px] mx-auto"></div>
+
+  <script>
+  /**************************************************************************
+   * RUKÉ — Ultra God IDE (Single-file client-side "production" prototype)
+   *
+   * Features (implemented):
+   *  - Multi-file project stored in localStorage (CRUD, import/export JSON, openFiles, activeFile)
+   *  - CodeMirror editor with mode switching and debounced auto-save + auto-run
+   *  - Preview iframe executes any selected file using Blob URLs; DOM-only injection (createElement)
+   *  - Console capture: postMessage from iframe -> app console
+   *  - Terminal (xterm.js) stub with echo + simple commands; logs to console
+   *  - AI-agent stub: accepts textual tasks and executes safe actions step-by-step with logging
+   *  - Developer features: export JSON, export ZIP, keyboard shortcuts (Ctrl/Cmd+S save, Ctrl+Enter run)
+   *  - Safety: validation, escaping console output, Blob revoke safety, try/catch guards
+   *
+   * Notes:
+   *  - This is fully client-side. For production-grade LLM calls or bucket uploads a backend is required.
+   *  - No real API keys included. If you provide a key, it will be stored in localStorage under your consent.
+   **************************************************************************/
+
+  (function () {
+    /* ---------- Constants & Storage keys ---------- */
+    const STORAGE_KEY_PROJECT = "ruke_project_prod_v1";
+    const STORAGE_KEY_SETTINGS = "ruke_settings_prod_v1";
+    const STORAGE_KEY_GEMINI = "ruke_gemini_key_prod_v1"; // user may store key if they accept risk
+
+    /* ---------- Default starter project ---------- */
+    const DEFAULT_PROJECT = {
+      files: {
+        "index.html": {
+          content:
+`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>RUKÉ Preview</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <h1 id="title">RUKÉ Ultra IDE</h1>
+    <p id="msg">Edit files, save & run the project. This preview executes the currently selected file.</p>
+    <script src="app.js"><\/script>
+  </body>
+</html>`,
+          type: "html",
+          lastEdited: Date.now()
+        },
+        "app.js": {
+          content:
+`// app.js - example
+console.log('app.js loaded');
+document.getElementById('msg').insertAdjacentHTML('beforeend', '<br><strong>app.js ran ✅</strong>');
+`,
+          type: "js",
+          lastEdited: Date.now()
+        },
+        "styles.css": {
+          content:
+`/* styles.css - example */
+body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto; margin: 24px; background: linear-gradient(180deg,#061021,#07102a); color: #e6eef6; }
+h1 { color: #60a5fa; }`,
+          type: "css",
+          lastEdited: Date.now()
+        }
+      },
+      openFiles: ["index.html", "app.js"],
+      activeFile: "index.html",
+      history: []
+    };
+
+    /* ---------- State ---------- */
+    let state = {
+      project: null,
+      settings: { autosave: true, autosaveDebounce: 500 },
+      cmInstance: null,
+      xterm: null,
+      consoleLines: [],
+      openFiles: [],
+      activeFile: null,
+      blobs: {},   // map filename -> blobUrl
+      revocationTimer: null,
+      aiTaskRunning: false
+    };
+
+    /* ---------- Utilities ---------- */
+
+    function safeParse(raw, fallback) {
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        console.warn("safeParse failed:", e);
+        return fallback;
+      }
+    }
+
+    function persistProject() {
+      try {
+        localStorage.setItem(STORAGE_KEY_PROJECT, JSON.stringify(state.project));
+      } catch (e) {
+        console.warn("persistProject failed:", e);
+      }
+    }
+
+    function loadProject() {
+      const raw = localStorage.getItem(STORAGE_KEY_PROJECT);
+      if (!raw) {
+        state.project = JSON.parse(JSON.stringify(DEFAULT_PROJECT));
+        state.openFiles = [...state.project.openFiles];
+        state.activeFile = state.project.activeFile || Object.keys(state.project.files)[0];
+        persistProject();
+        return;
+      }
+      const parsed = safeParse(raw, null);
+      if (!parsed || !parsed.files) {
+        // corrupted storage -> reset to default
+        state.project = JSON.parse(JSON.stringify(DEFAULT_PROJECT));
+      } else {
+        state.project = parsed;
+      }
+      state.openFiles = state.project.openFiles && state.project.openFiles.length ? [...state.project.openFiles] : Object.keys(state.project.files).slice(0, 4);
+      state.activeFile = state.project.activeFile || Object.keys(state.project.files)[0];
+      // ensure activeFile exists
+      if (!state.project.files[state.activeFile]) {
+        state.activeFile = Object.keys(state.project.files)[0];
+      }
+    }
+
+    function saveSettings() {
+      try {
+        localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(state.settings));
+      } catch (e) {}
+    }
+
+    function loadSettings() {
+      const raw = localStorage.getItem(STORAGE_KEY_SETTINGS);
+      if (raw) {
+        state.settings = Object.assign(state.settings, safeParse(raw, {}));
+      }
+    }
+
+    function ensureFileObject(name) {
+      if (!state.project.files[name]) {
+        state.project.files[name] = { content: "", type: inferTypeFromName(name), lastEdited: Date.now() };
+      }
+    }
+
+    function inferTypeFromName(name) {
+      const n = name.toLowerCase();
+      if (n.endsWith(".html") || n.endsWith(".htm")) return "html";
+      if (n.endsWith(".css")) return "css";
+      if (n.endsWith(".json")) return "json";
+      if (n.endsWith(".xml")) return "xml";
+      if (n.endsWith(".md")) return "markdown";
+      return "js";
+    }
+
+    function sanitizeForHtml(s) {
+      if (typeof s !== "string") return String(s);
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    /* ---------- Console area ---------- */
+
+    function addConsoleLine(line, level = "log") {
+      const text = typeof line === "string" ? line : JSON.stringify(line);
+      const entry = { time: Date.now(), text, level };
+      state.consoleLines.push(entry);
+      // keep reasonable history
+      if (state.consoleLines.length > 2000) state.consoleLines.shift();
+      try { m.redraw(); } catch (e) {}
+      // Also log to browser console for debugging
+      if (level === "error") console.error("[RUKÉ]", text);
+      else console.log("[RUKÉ]", text);
+    }
+
+    function clearConsole() {
+      state.consoleLines = [];
+      try { m.redraw(); } catch (e) {}
+    }
+
+    /* ---------- Blob management & safe injection (DOM-only) ---------- */
+
+    function createBlobsForProject() {
+      // revoke previous if present
+      revokeAllBlobs();
+
+      state.blobs = {};
+      for (const [name, file] of Object.entries(state.project.files)) {
+        const mime = name.endsWith(".js") ? "application/javascript" :
+                     name.endsWith(".css") ? "text/css" :
+                     name.endsWith(".html") ? "text/html" : "text/plain";
+        try {
+          const blobUrl = URL.createObjectURL(new Blob([file.content], { type: mime }));
+          state.blobs[name] = blobUrl;
+        } catch (e) {
+          addConsoleLine("⚠️ Blob creation failed for " + name + ": " + String(e), "error");
+        }
+      }
+      // schedule revocation
+      if (state.revocationTimer) clearTimeout(state.revocationTimer);
+      state.revocationTimer = setTimeout(() => revokeAllBlobs(), 60000); // revoke after 60s
+    }
+
+    function revokeAllBlobs() {
+      try {
+        for (const u of Object.values(state.blobs || {})) {
+          try { URL.revokeObjectURL(u); } catch (e) {}
+        }
+      } catch (e) {}
+      state.blobs = {};
+      if (state.revocationTimer) { clearTimeout(state.revocationTimer); state.revocationTimer = null; }
+    }
+
+    function buildAndInjectToIframe(entryFileName, iframeEl) {
+      // Ensure we have up-to-date blobs
+      createBlobsForProject();
+
+      // Validate presence of project file
+      const files = state.project.files;
+      if (!files[entryFileName]) {
+        addConsoleLine("⚠️ Entry file not found: " + entryFileName, "error");
+        // show fallback
+        const doc = iframeEl.contentDocument || iframeEl.contentWindow.document;
+        doc.open();
+        doc.write("<!doctype html><html><body><pre>Entry not found: " + sanitizeForHtml(entryFileName) + "</pre></body></html>");
+        doc.close();
+        return;
+      }
+
+      // Build DOM-only document inside iframe
+      const doc = iframeEl.contentDocument || iframeEl.contentWindow.document;
+      // clear existing document in an atomic way
+      try {
+        // Create new document element
+        const newDoc = doc.implementation.createHTMLDocument("");
+        // Head & meta
+        const head = newDoc.head || newDoc.getElementsByTagName('head')[0] || document.createElement('head');
+        // Title (if provided in file, we'll keep file's title)
+        const titleNode = newDoc.createElement('title');
+        titleNode.textContent = "Preview — " + entryFileName;
+        head.appendChild(titleNode);
+
+        // Attach styles from all .css files in project (order: alphabetical for determinism)
+        Object.keys(files).sort().forEach(name => {
+          if (name.toLowerCase().endsWith(".css")) {
+            const link = newDoc.createElement('link');
+            link.rel = "stylesheet";
+            link.href = state.blobs[name];
+            head.appendChild(link);
+          }
+        });
+
+        // Inject console hook early so logs in scripts are captured
+        const hookScript = newDoc.createElement('script');
+        hookScript.textContent = '(' + function () {
+          // This function is stringified and injected; keep minimal & safe
+          function safeString(x) {
+            try { if (typeof x === 'undefined') return 'undefined'; if (x === null) return 'null'; return typeof x === 'string' ? x : JSON.stringify(x); } catch (e) { return String(x); }
+          }
+          const _log = console.log.bind(console);
+          const _error = console.error.bind(console);
+          console.log = function () {
+            try { parent.postMessage({ type: 'ruke_console', args: Array.from(arguments).map(a=>safeString(a)), level: 'log' }, '*'); } catch (e) {}
+            _log.apply(console, arguments);
+          };
+          console.error = function () {
+            try { parent.postMessage({ type: 'ruke_console', args: Array.from(arguments).map(a=>safeString(a)), level: 'error' }, '*'); } catch (e) {}
+            _error.apply(console, arguments);
+          };
+          window.addEventListener('error', function (ev) {
+            try { parent.postMessage({ type: 'ruke_console', args: [String(ev.message) + ' at ' + (ev.lineno||ev.lineNumber) + ':' + (ev.colno||ev.colno)], level: 'error' }, '*'); } catch (e) {}
+          });
+          window.addEventListener('unhandledrejection', function (ev) {
+            try { parent.postMessage({ type: 'ruke_console', args: ['UnhandledRejection: ' + String(ev.reason)], level: 'error' }, '*'); } catch (e) {}
+          });
+        } + ')();';
+        head.appendChild(hookScript);
+
+        // For HTML entry: parse the HTML and move relative assets to blobs
+        const entry = files[entryFileName];
+        let entryIsHtml = entryFileName.toLowerCase().endsWith(".html") || entryFileName.toLowerCase().endsWith(".htm");
+
+        if (entryIsHtml) {
+          // Parse entry HTML into DOM safely using DOMParser in the parent, then import nodes into newDoc
+          try {
+            const parser = new DOMParser();
+            const parsed = parser.parseFromString(entry.content, 'text/html');
+
+            // Move <link> and <script> references that refer to project files to blob URLs
+            // Adjust <link href="styles.css"> -> blob
+            parsed.querySelectorAll('link[rel="stylesheet"]').forEach(linkEl => {
+              const href = linkEl.getAttribute('href') || '';
+              const baseName = href.split('?')[0].split('#')[0];
+              if (state.blobs[baseName]) {
+                const newLink = newDoc.createElement('link');
+                newLink.rel = 'stylesheet';
+                newLink.href = state.blobs[baseName];
+                head.appendChild(newLink);
+                linkEl.remove();
+              } else {
+                // External link - clone as-is
+                const cloneLink = newDoc.createElement('link');
+                cloneLink.rel = 'stylesheet';
+                cloneLink.href = href;
+                head.appendChild(cloneLink);
+                linkEl.remove();
+              }
+            });
+
+            // Move <script src="..."> tags referencing project files to body with blob URLs
+            const body = newDoc.body || newDoc.getElementsByTagName('body')[0] || newDoc.createElement('body');
+            // Transfer body content (text/DOM) from parsed to newDoc body
+            // but replace project script src/href references with blob URLs
+            parsed.body && Array.from(parsed.body.childNodes).forEach(node => {
+              // If node is script with src referencing project file
+              if (node.nodeName.toLowerCase() === 'script' && node.getAttribute && node.getAttribute('src')) {
+                const src = node.getAttribute('src') || '';
+                const baseName = src.split('?')[0].split('#')[0];
+                if (state.blobs[baseName]) {
+                  const s = newDoc.createElement('script');
+                  s.src = state.blobs[baseName];
+                  body.appendChild(s);
+                } else {
+                  // external script -> clone with same src (may fail due to CORS)
+                  const s = newDoc.createElement('script');
+                  s.src = src;
+                  body.appendChild(s);
+                }
+              } else {
+                // Import other nodes (text, elements) directly by cloning into newDoc
+                try {
+                  const imported = newDoc.importNode(node, true);
+                  body.appendChild(imported);
+                } catch (e) {
+                  // Fallback: append text version
+                  const div = newDoc.createElement('div');
+                  div.textContent = node.textContent || '';
+                  body.appendChild(div);
+                }
+              }
+            });
+
+            // If parsed.head contains <meta> tags, import them
+            parsed.head && Array.from(parsed.head.childNodes).forEach(n => {
+              if (n.nodeName.toLowerCase() === 'link' && n.getAttribute('rel') === 'stylesheet') {
+                // already handled above
+              } else {
+                try { head.appendChild(newDoc.importNode(n, true)); } catch (e) {}
+              }
+            });
+
+            // assemble newDoc
+            newDoc.documentElement && newDoc.replaceChild(head, newDoc.head);
+            if (!newDoc.body || !newDoc.body.parentNode) newDoc.appendChild(body);
+          } catch (e) {
+            addConsoleLine("⚠️ HTML parse error for " + entryFileName + ": " + String(e), "error");
+            // fallback: create basic scaffold
+            const body = newDoc.body || newDoc.createElement('body');
+            const pre = newDoc.createElement('pre');
+            pre.textContent = "Error parsing HTML entry: " + String(e);
+            body.appendChild(pre);
+            newDoc.appendChild(body);
+          }
+        } else {
+          // Not an HTML entry: build a minimal HTML scaffolding and attach blob scripts/styles
+          const body = newDoc.body || newDoc.createElement('body');
+          // add a simple info element
+          const info = newDoc.createElement('div');
+          info.style.fontFamily = 'system-ui';
+          info.style.padding = '12px';
+          info.style.background = '#fff';
+          info.style.color = '#000';
+          info.textContent = 'Preview: running ' + entryFileName;
+          body.appendChild(info);
+
+          // For CSS files: attach all CSS blobs
+          Object.keys(files).sort().forEach(name => {
+            if (name.toLowerCase().endsWith('.css')) {
+              const link = newDoc.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = state.blobs[name];
+              head.appendChild(link);
+            }
+          });
+
+          // Attach selected file if JS -> script src blob
+          if (entryFileName.toLowerCase().endsWith('.js')) {
+            const s = newDoc.createElement('script');
+            s.src = state.blobs[entryFileName];
+            body.appendChild(s);
+          } else {
+            // show content if text
+            const pre = newDoc.createElement('pre');
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.textContent = files[entryFileName].content || '';
+            body.appendChild(pre);
+          }
+        }
+
+        // Final atomic swap: write newDoc into iframe
+        // Use iframe.open/write/close as last resort to ensure full replacement in older browsers
+        try {
+          doc.open();
+          // Serialize newDoc safely via newDoc.documentElement.outerHTML
+          const serialized = new XMLSerializer().serializeToString(newDoc);
+          doc.write(serialized);
+          doc.close();
+        } catch (e) {
+          // Fallback: adopt nodes to existing doc (less ideal)
+          try {
+            const importedHtml = doc.importNode(newDoc.documentElement, true);
+            while (doc.documentElement.firstChild) doc.documentElement.removeChild(doc.documentElement.firstChild);
+            doc.replaceChild(importedHtml, doc.documentElement);
+            doc.close();
+          } catch (err) {
+            addConsoleLine("⚠️ Failed to inject preview DOM: " + String(err), "error");
+          }
+        }
+      } catch (e) {
+        addConsoleLine("⚠️ buildAndInjectToIframe error: " + String(e), "error");
+      }
+    }
+
+    /* ---------- Listen for postMessage logs from iframe ---------- */
+
+    window.addEventListener("message", (ev) => {
+      try {
+        const d = ev.data;
+        if (!d || typeof d !== "object") return;
+        if (d.type === "ruke_console" && Array.isArray(d.args)) {
+          addConsoleLine(d.args.join(" "), d.level || "log");
+        }
+      } catch (e) {}
+    }, false);
+
+    /* ---------- Editor (CodeMirror) management with debounced autosave ---------- */
+
+    let saveTimer = null;
+    function initCodeMirror(containerEl) {
+      if (!containerEl) return;
+      if (state.cmInstance) {
+        // already created
+        return state.cmInstance;
+      }
+      const cm = CodeMirror(containerEl, {
+        value: state.project.files[state.activeFile].content || "",
+        mode: modeFromFilename(state.activeFile),
+        theme: "material-darker",
+        lineNumbers: true,
+        autoCloseBrackets: true,
+        matchBrackets: true,
+        tabSize: 2,
+        indentUnit: 2,
+      });
+      cm.on("change", () => {
+        // debounce save and optional auto-run
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+          // update content in project
+          if (state.activeFile) {
+            state.project.files[state.activeFile].content = cm.getValue();
+            state.project.files[state.activeFile].lastEdited = Date.now();
+            if (state.settings.autosave) persistProject();
+            try { m.redraw(); } catch (e) {}
+            // Auto-run active file after save
+            try { buildAndInjectToIframe(state.activeFile, document.getElementById("ruke-preview")); } catch (e) {}
+          }
+        }, state.settings.autosaveDebounce || 500);
+      });
+      state.cmInstance = cm;
+      return cm;
+    }
+
+    function modeFromFilename(name) {
+      if (!name) return "htmlmixed";
+      const n = name.toLowerCase();
+      if (n.endsWith(".js")) return "javascript";
+      if (n.endsWith(".css")) return "css";
+      if (n.endsWith(".json")) return "application/json";
+      if (n.endsWith(".html") || n.endsWith(".htm")) return "htmlmixed";
+      return "javascript";
+    }
+
+    /* ---------- Terminal (xterm.js) ---------- */
+
+    function initTerminal(containerEl) {
+      if (!containerEl) return;
+      if (state.xterm) return state.xterm;
+      const term = new window.Terminal({ cols: 80, rows: 10, convertEol: true });
+      term.open(containerEl);
+      term.writeln('RUKÉ Terminal — type "help" for commands');
+      term.prompt = () => { term.write('\r\n$ '); };
+      term.prompt();
+
+      term.onKey(({ key, domEvent }) => {
+        if (domEvent.key === "Enter") {
+          // get current line - for simplicity not using full buffer extraction
+          // we use a simple buffer approach: we capture typed chars since last prompt
+          // For production, keep full input buffer
+        }
+      });
+
+      // Simple input handling with a small input line
+      let inputBuffer = "";
+      term.onData((data) => {
+        for (let ch of data) {
+          if (ch === "\r") { // Enter
+            const cmd = inputBuffer.trim();
+            inputBuffer = "";
+            term.writeln('');
+            if (cmd.length) {
+              handleTerminalCommand(cmd, term);
+            }
+            term.prompt();
+          } else if (ch === "\u007F") { // backspace
+            if (inputBuffer.length > 0) {
+              inputBuffer = inputBuffer.slice(0, -1);
+              term.write('\b \b');
+            }
+          } else {
+            inputBuffer += ch;
+            term.write(ch);
+          }
+        }
+      });
+
+      state.xterm = term;
+      return term;
+    }
+
+    function handleTerminalCommand(cmd, term) {
+      // Simple built-in commands: help, ls, cat <file>, run <file>, echo, clear
+      addConsoleLine(`> ${cmd}`, "log");
+      const parts = cmd.split(/\s+/);
+      const c = parts[0].toLowerCase();
+      switch (c) {
+        case "help":
+          term.writeln("Available: help, ls, cat <file>, run <file>, echo <text>, clear");
+          break;
+        case "ls":
+          Object.keys(state.project.files).forEach(f => term.writeln(f));
+          break;
+        case "cat":
+          if (parts[1] && state.project.files[parts[1]]) {
+            const content = state.project.files[parts[1]].content;
+            term.writeln(content);
+          } else term.writeln("File not found");
+          break;
+        case "run":
+          if (parts[1]) {
+            const name = parts[1];
+            if (state.project.files[name]) {
+              buildAndInjectToIframe(name, document.getElementById("ruke-preview"));
+              term.writeln("Running " + name);
+            } else term.writeln("File not found: " + name);
+          } else term.writeln("Usage: run <file>");
+          break;
+        case "echo":
+          term.writeln(parts.slice(1).join(" "));
+          break;
+        case "clear":
+          term.clear();
+          break;
+        default:
+          term.writeln("Unknown command: " + c);
+      }
+    }
+
+    /* ---------- File CRUD and project operations ---------- */
+
+    function newFile(name) {
+      if (!name) {
+        name = prompt("New file name (e.g., app.js or page.html):", "untitled.js");
+        if (!name) return;
+      }
+      if (state.project.files[name]) { alert("File already exists"); return; }
+      state.project.files[name] = { content: "", type: inferTypeFromName(name), lastEdited: Date.now() };
+      if (!state.openFiles.includes(name)) state.openFiles.push(name);
+      state.activeFile = name;
+      persistProject();
+      addConsoleLine("Created file: " + name);
+      try { m.redraw(); } catch (e) {}
+    }
+
+    function deleteFile(name) {
+      if (!name) return;
+      if (!confirm("Delete file " + name + " ?")) return;
+      delete state.project.files[name];
+      state.openFiles = state.openFiles.filter(f => f !== name);
+      if (state.activeFile === name) state.activeFile = state.openFiles[0] || Object.keys(state.project.files)[0] || null;
+      persistProject();
+      addConsoleLine("Deleted file: " + name);
+      try { m.redraw(); } catch (e) {}
+    }
+
+    function renameFile(oldName, newName) {
+      if (!oldName || !newName) return;
+      if (!state.project.files[oldName]) return;
+      if (state.project.files[newName]) { alert("Target exists"); return; }
+      state.project.files[newName] = Object.assign({}, state.project.files[oldName]);
+      delete state.project.files[oldName];
+      state.openFiles = state.openFiles.map(f => f === oldName ? newName : f);
+      if (state.activeFile === oldName) state.activeFile = newName;
+      persistProject();
+      addConsoleLine(`Renamed ${oldName} -> ${newName}`);
+      try { m.redraw(); } catch (e) {}
+    }
+
+    function duplicateFile(name, newName) {
+      if (!state.project.files[name]) return;
+      if (!newName) newName = name + ".copy";
+      state.project.files[newName] = { content: state.project.files[name].content, type: state.project.files[name].type, lastEdited: Date.now() };
+      persistProject();
+      addConsoleLine(`Duplicated ${name} -> ${newName}`);
+      try { m.redraw(); } catch (e) {}
+    }
+
+    function importProjectFromJson(fileContent) {
+      try {
+        const obj = JSON.parse(fileContent);
+        if (!obj.files || typeof obj.files !== "object") throw new Error("Invalid project JSON");
+        // Validate
+        for (const k of Object.keys(obj.files)) {
+          if (typeof obj.files[k].content !== "string") throw new Error("Invalid file content for " + k);
+        }
+        state.project = obj;
+        state.openFiles = Object.keys(state.project.files).slice(0, 4);
+        state.activeFile = state.openFiles[0] || Object.keys(state.project.files)[0];
+        persistProject();
+        addConsoleLine("Imported project JSON");
+        try { m.redraw(); } catch (e) {}
+      } catch (e) {
+        alert("Import failed: " + String(e));
+      }
+    }
+
+    function exportProjectJson() {
+      const blob = new Blob([JSON.stringify(state.project, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = "ruke_project.json";
+      a.click();
+      URL.revokeObjectURL(url);
+      addConsoleLine("Exported project JSON");
+    }
+
+    async function exportProjectZip() {
+      try {
+        const zip = new JSZip();
+        for (const [name, file] of Object.entries(state.project.files)) {
+          zip.file(name, file.content);
+        }
+        const blob = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = "ruke_project.zip";
+        a.click();
+        URL.revokeObjectURL(url);
+        addConsoleLine("Exported project ZIP");
+      } catch (e) {
+        addConsoleLine("ZIP export failed: " + String(e), "error");
+      }
+    }
+
+    /* ---------- AI-agent stub (local) ----------
+       This agent implements:
+        - parse user query into basic todo actions (simple rule-based here)
+        - execute actions step-by-step with logging
+        - on run failures, capture recent console errors and attempt a basic fix (heuristic)
+       For full LLM integration: replace `agent_parseQuery` with a call to your LLM via backend.
+    */
+
+    function agent_parseQueryToTodos(query) {
+      // Simple heuristics to generate tasks from plain queries. For production replace with LLM.
+      const todos = [];
+      const q = query.toLowerCase();
+      // common patterns
+      if (q.includes("create") && q.includes("index")) {
+        todos.push({ type: "create_file", name: "index.html", content: DEFAULT_PROJECT.files["index.html"].content });
+      }
+      if (q.includes("todo") || q.includes("todo app")) {
+        // create simple todo app files
+        todos.push({ type: "create_file", name: "index.html", content:
+`<!doctype html>
+<html><head><meta charset="utf-8"><title>Todo</title><link rel="stylesheet" href="styles.css"></head>
+<body><div id="app"></div><script src="app.js"><\/script></body></html>` });
+        todos.push({ type: "create_file", name: "styles.css", content:
+`body{font-family:system-ui;margin:20px;background:#071027;color:#e6eef6}
+#app{max-width:640px}` });
+        todos.push({ type: "create_file", name: "app.js", content:
+`(function(){
+  const root = document.getElementById('app');
+  const list = JSON.parse(localStorage.getItem('todos')||'[]');
+  function render(){
+    root.innerHTML = '';
+    const h = document.createElement('h1'); h.textContent = 'Todo'; root.appendChild(h);
+    const input = document.createElement('input'); input.placeholder='Add todo';
+    const btn = document.createElement('button'); btn.textContent='Add';
+    btn.onclick = ()=>{ if(input.value.trim()){ list.push(input.value.trim()); localStorage.setItem('todos', JSON.stringify(list)); input.value=''; render(); } };
+    root.appendChild(input); root.appendChild(btn);
+    const ul = document.createElement('ul');
+    list.forEach((t,i)=>{ const li=document.createElement('li'); li.textContent=t; const d=document.createElement('button'); d.textContent='Del'; d.onclick=()=>{ list.splice(i,1); localStorage.setItem('todos',JSON.stringify(list)); render(); }; li.appendChild(d); ul.appendChild(li); });
+    root.appendChild(ul);
+  }
+  render();
+})();` });
+      }
+      // fallback: if user mentions filename, create that
+      const matchNewFile = query.match(/create file (\S+\.\w+)/i);
+      if (matchNewFile) {
+        todos.push({ type: "create_file", name: matchNewFile[1], content: "" });
+      }
+      // Always include a run if user asked to build/run
+      if (q.includes("run") || q.includes("start") || q.includes("serve")) {
+        // run active file (or index.html)
+        todos.push({ type: "run_file", name: state.activeFile || "index.html" });
+      }
+      return todos;
+    }
+
+    async function agent_executeTodos(todos) {
+      if (!Array.isArray(todos) || !todos.length) {
+        addConsoleLine("Agent: no tasks to run");
+        return;
+      }
+      state.aiTaskRunning = true;
+      addConsoleLine("Agent: starting " + todos.length + " tasks");
+      const snapshot = JSON.parse(JSON.stringify(state.project)); // simple snapshot for rollback
+      for (const t of todos) {
+        try {
+          addConsoleLine("Agent: executing " + JSON.stringify(t));
+          if (t.type === "create_file") {
+            if (state.project.files[t.name]) {
+              addConsoleLine("Agent: file exists, skipping create: " + t.name);
+            } else {
+              state.project.files[t.name] = { content: t.content || "", type: inferTypeFromName(t.name), lastEdited: Date.now() };
+              if (!state.openFiles.includes(t.name)) state.openFiles.push(t.name);
+              state.activeFile = t.name;
+              persistProject();
+              addConsoleLine("Agent: created " + t.name);
+            }
+          } else if (t.type === "edit_file") {
+            if (!state.project.files[t.name]) {
+              addConsoleLine("Agent: edit failed, file not found: " + t.name, "error");
+            } else {
+              state.project.files[t.name].content = t.content;
+              state.project.files[t.name].lastEdited = Date.now();
+              persistProject();
+              addConsoleLine("Agent: edited " + t.name);
+            }
+          } else if (t.type === "delete_file") {
+            deleteFile(t.name);
+            addConsoleLine("Agent: deleted " + t.name);
+          } else if (t.type === "run_file") {
+            buildAndInjectToIframe(t.name || state.activeFile || "index.html", document.getElementById("ruke-preview"));
+            addConsoleLine("Agent: ran " + (t.name || state.activeFile));
+            // Monitor basic errors for a short time
+            const errors = await agent_monitorForErrors(1500);
+            if (errors && errors.length) {
+              addConsoleLine("Agent: detected errors after run: " + JSON.stringify(errors), "error");
+              // Try a trivial auto-fix: if ReferenceError for missing function, add stub
+              for (const err of errors) {
+                const m = err.match(/ReferenceError: (\\w+) is not defined/i);
+                if (m) {
+                  const missing = m[1];
+                  addConsoleLine("Agent: attempting to auto-stub " + missing);
+                  // Try to inject stub into first JS file or create helper.js
+                  const jsFiles = Object.keys(state.project.files).filter(n => n.endsWith('.js'));
+                  if (jsFiles.length) {
+                    const target = jsFiles[0];
+                    state.project.files[target].content += `\n// Auto-stub added by agent\nif (typeof ${missing} === 'undefined'){ window.${missing} = function(){console.log('auto-stub ${missing} called');}; }`;
+                    persistProject();
+                    addConsoleLine("Agent: stubbed " + missing + " in " + target);
+                    // re-run
+                    buildAndInjectToIframe(t.name || state.activeFile || "index.html", document.getElementById("ruke-preview"));
+                    const errors2 = await agent_monitorForErrors(1200);
+                    if (!errors2.length) addConsoleLine("Agent: issue resolved after stub");
+                    else addConsoleLine("Agent: issue persists: " + JSON.stringify(errors2), "error");
+                  } else {
+                    // create helper.js
+                    const helperName = "ruke_helper.js";
+                    state.project.files[helperName] = { content: `if (typeof ${missing} === 'undefined'){ window.${missing} = function(){console.log('auto-stub ${missing}');}; }`, type: "js", lastEdited: Date.now() };
+                    persistProject();
+                    addConsoleLine("Agent: created " + helperName + " to stub " + missing);
+                    buildAndInjectToIframe(t.name || state.activeFile || "index.html", document.getElementById("ruke-preview"));
+                    const errors3 = await agent_monitorForErrors(1200);
+                    if (!errors3.length) addConsoleLine("Agent: issue resolved after helper");
+                    else addConsoleLine("Agent: issue persists after helper", "error");
+                  }
+                } else {
+                  addConsoleLine("Agent: no auto-fix rule for error: " + err, "error");
+                }
+              }
+            } else {
+              addConsoleLine("Agent: run completed with no detected errors");
+            }
+          } else if (t.type === "save_project") {
+            persistProject();
+            addConsoleLine("Agent: project saved");
+          } else {
+            addConsoleLine("Agent: unknown task type: " + (t.type || "<missing>"), "error");
+          }
+        } catch (e) {
+          addConsoleLine("Agent: task error: " + String(e), "error");
+        }
+      }
+      state.aiTaskRunning = false;
+      addConsoleLine("Agent: tasks finished");
+      // snapshot final state to history
+      state.project.history = state.project.history || [];
+      state.project.history.push({ time: Date.now(), snapshot: JSON.parse(JSON.stringify(state.project.files)), note: "Agent run snapshot" });
+      persistProject();
+      try { m.redraw(); } catch (e) {}
+    }
+
+    function agent_monitorForErrors(waitMs = 1500) {
+      return new Promise(resolve => {
+        const startLen = state.consoleLines.length;
+        const errors = [];
+        const check = () => {
+          for (let i = startLen; i < state.consoleLines.length; i++) {
+            const ln = state.consoleLines[i];
+            if (ln.level === "error" || /error/i.test(ln.text)) errors.push(ln.text);
+          }
+          resolve(errors);
+        };
+        setTimeout(check, waitMs);
+      });
+    }
+
+    /* ---------- Keyboard shortcuts ---------- */
+
+    window.addEventListener("keydown", (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        // Save active file
+        if (state.cmInstance && state.activeFile) {
+          state.project.files[state.activeFile].content = state.cmInstance.getValue();
+          state.project.files[state.activeFile].lastEdited = Date.now();
+          persistProject();
+          addConsoleLine("Saved " + state.activeFile);
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        // Run active file
+        buildAndInjectToIframe(state.activeFile || "index.html", document.getElementById("ruke-preview"));
+        addConsoleLine("Run requested via shortcut for " + (state.activeFile || "index.html"));
+      }
+    });
+
+    /* ---------- UI (Mithril) ---------- */
+
+    // Helper small inline SVG icons
+    const ICONS = {
+      run: m("svg.icon", { viewBox: "0 0 24 24", fill: "none", xmlns: "http://www.w3.org/2000/svg" }, [
+        m("path", { d: "M5 3v18l15-9L5 3z", fill: "#60a5fa" })
+      ]),
+      save: m("svg.icon", { viewBox: "0 0 24 24", xmlns: "http://www.w3.org/2000/svg" }, [
+        m("path", { d: "M5 5v14h14V7l-6-4H5z", fill: "#a3e635" })
+      ])
+    };
+
+    const FileList = {
+      view() {
+        const files = Object.keys(state.project.files).sort();
+        return m("div.p-2.h-full", [
+          m("div.flex.items-center.justify-between.mb-2", [
+            m("div.font-semibold", "Files"),
+            m("div.flex.gap-2", [
+              m("button.btn.text-xs", { onclick: () => {
+                const n = prompt("New file name:", "new-file.js");
+                if (n) newFile(n);
+              } }, "New"),
+              m("button.btn.text-xs", { onclick: () => {
+                const input = document.createElement('input');
+                input.type = "file";
+                input.accept = ".json";
+                input.onchange = async (ev) => {
+                  const f = ev.target.files[0];
+                  if (!f) return;
+                  const txt = await f.text();
+                  importProjectFromJson(txt);
+                };
+                input.click();
+              } }, "Import")
+            ])
+          ]),
+          m("div.border.border-[rgba(255,255,255,0.04)].rounded-md.overflow-auto.max-h-[60vh].p-1", files.map(name => {
+            const active = name === state.activeFile;
+            return m("div.file-row", { class: active ? "file-row active" : "file-row", onclick: () => {
+              state.activeFile = name;
+              if (!state.openFiles.includes(name)) state.openFiles.push(name);
+              // update editor content
+              if (state.cmInstance) {
+                state.cmInstance.setOption("mode", modeFromFilename(name));
+                const val = state.project.files[name].content || "";
+                if (state.cmInstance.getValue() !== val) state.cmInstance.setValue(val);
+                try { state.cmInstance.refresh(); } catch (e) {}
+              }
+              persistProject();
+            } }, [
+              m("div.text-sm", name),
+              m("div.flex.gap-1", [
+                m("button.btn.text-xs", { onclick: (e) => { e.stopPropagation(); const nn = prompt('Rename to:', name); if (nn) renameFile(name, nn); } }, "✏"),
+                m("button.btn.text-xs", { onclick: (e) => { e.stopPropagation(); duplicateFile(name, name + ".copy"); } }, "⧉"),
+                m("button.btn.text-xs", { onclick: (e) => { e.stopPropagation(); if (confirm('Delete ' + name + ' ?')) deleteFile(name); } }, "🗑")
+              ])
+            ]);
+          }))
+        ]);
+      }
+    };
+
+    const EditorPane = {
+      oncreate(vnode) {
+        const holder = vnode.dom.querySelector("#editor-holder");
+        // init CodeMirror
+        const cm = initCodeMirror(holder);
+        // set initial value
+        const active = state.activeFile || Object.keys(state.project.files)[0];
+        if (active && state.project.files[active]) {
+          cm.setValue(state.project.files[active].content || "");
+          cm.setOption("mode", modeFromFilename(active));
+        }
+      },
+      onupdate() {
+        const active = state.activeFile;
+        if (state.cmInstance && active) {
+          if (state.cmInstance.getOption("mode") !== modeFromFilename(active)) {
+            state.cmInstance.setOption("mode", modeFromFilename(active));
+          }
+          const current = state.cmInstance.getValue();
+          const desired = state.project.files[active].content || "";
+          if (current !== desired) state.cmInstance.setValue(desired);
+        }
+      },
+      view() {
+        return m("div.flex-1.flex.flex-col.h-full", [
+          m("div.flex.items-center.justify-between.p-2.border-b.border-[rgba(255,255,255,0.04)]", [
+            m("div.flex.items-center.gap-4", [
+              m("div.font-semibold", state.activeFile || "No file"),
+              m("div.small", state.activeFile ? modeFromFilename(state.activeFile) : "")
+            ]),
+            m("div.flex.gap-2", [
+              m("button.btn", { onclick: () => {
+                // save active
+                if (state.cmInstance && state.activeFile) {
+                  state.project.files[state.activeFile].content = state.cmInstance.getValue();
+                  state.project.files[state.activeFile].lastEdited = Date.now();
+                  persistProject();
+                  addConsoleLine("Saved " + state.activeFile);
+                }
+              } }, [ICONS.save, "Save"]),
+              m("button.btn", { onclick: () => {
+                buildAndInjectToIframe(state.activeFile || "index.html", document.getElementById("ruke-preview"));
+                addConsoleLine("Run " + (state.activeFile || "index.html"));
+              } }, [ICONS.run, "Run"]),
+            ])
+          ]),
+          m("div.flex-1.relative", { style: "min-height:300px" }, m("div.absolute.inset-0", { id: "editor-holder", style: "height:100%;" })),
+          m("div.p-2.flex.items-center.gap-2.border-t.border-[rgba(255,255,255,0.04)]", [
+            m("div.small", "Open:"),
+            state.openFiles && state.openFiles.map(f => m("button.btn.text-xs", { onclick: () => { state.activeFile = f; try { state.cmInstance.setValue(state.project.files[f].content || ""); state.cmInstance.setOption("mode", modeFromFilename(f)); } catch (e) {} } }, f))
+          ])
+        ]);
+      }
+    };
+
+    const PreviewConsolePanel = {
+      view() {
+        return m("div.flex.flex-col.gap-2.h-full", [
+          m("div.glass.p-2", m("div.font-semibold", "Preview")),
+          m("iframe#ruke-preview.preview-frame", { style: "height:42vh" }),
+          m("div.mt-2.flex.items-center.justify-between", [
+            m("div.font-semibold", "Console"),
+            m("div.flex.gap-2", [
+              m("button.btn.text-sm", { onclick: () => clearConsole() }, "Clear"),
+              m("button.btn.text-sm", { onclick: () => {
+                // copy console to clipboard
+                const text = state.consoleLines.map(l => new Date(l.time).toLocaleTimeString() + " " + l.level + " " + l.text).join("\n");
+                navigator.clipboard && navigator.clipboard.writeText(text).then(()=>addConsoleLine("Console copied to clipboard"));
+              } }, "Copy")
+            ])
+          ]),
+          m("div.console.overflow-auto", state.consoleLines.slice().reverse().map(l => m("div.mb-1", [
+            m("div.text-xs.small", new Date(l.time).toLocaleTimeString() + " • " + l.level),
+            m("div.text-sm", { style: l.level === "error" ? "color:#ffb4b4" : "" }, sanitizeForHtml(l.text))
+          ])))
+        ]);
+      }
+    };
+
+    const RightTools = {
+      view() {
+        return m("div.flex.flex-col.gap-2.w-[360px]", [
+          m("div.glass.p-3", [
+            m("div.font-semibold.mb-2", "AI Agent"),
+            m("div.mb-2", m("input.input[type=text]", {
+              placeholder: "Describe task e.g. 'Create todo app and run'",
+              oninput: (e) => { state._agentPrompt = e.target.value; },
+              value: state._agentPrompt || ""
+            })),
+            m("div.flex.gap-2", [
+              m("button.btn", { onclick: async () => {
+                const q = state._agentPrompt || prompt("Agent task:");
+                if (!q) return;
+                addConsoleLine("Agent received query: " + q);
+                const todos = agent_parseQueryToTodos(q);
+                addConsoleLine("Agent generated tasks: " + JSON.stringify(todos));
+                await agent_executeTodos(todos);
+              } }, "Run Agent"),
+              m("button.btn", { onclick: () => {
+                // quick demo: auto-run built-in sample
+                const todos = agent_parseQueryToTodos("create todo app and run");
+                agent_executeTodos(todos);
+              } }, "Demo")
+            ])
+          ]),
+          m("div.glass.p-3", [
+            m("div.font-semibold.mb-2", "Utilities"),
+            m("div.flex.flex-col.gap-2", [
+              m("button.btn", { onclick: () => exportProjectJson() }, "Export JSON"),
+              m("button.btn", { onclick: () => exportProjectZip() }, "Export ZIP"),
+              m("button.btn", { onclick: () => {
+                const el = document.createElement('input'); el.type = 'file'; el.accept = '.json';
+                el.onchange = async (ev) => {
+                  const f = ev.target.files[0];
+                  if (!f) return;
+                  const txt = await f.text();
+                  importProjectFromJson(txt);
+                };
+                el.click();
+              } }, "Import JSON"),
+              m("button.btn", { onclick: () => {
+                const k = prompt("Paste LLM API key (will be stored in localStorage) — WARNING: exposing key in browser is insecure. Leave blank to skip.");
+                if (k !== null) {
+                  if (k.trim()) localStorage.setItem(STORAGE_KEY_GEMINI, k.trim());
+                  else localStorage.removeItem(STORAGE_KEY_GEMINI);
+                  addConsoleLine("LLM key updated (stored in localStorage)");
+                }
+              } }, "Set LLM Key (optional)")
+            ])
+          ]),
+          m("div.glass.p-3", [
+            m("div.font-semibold.mb-2", "Open Files"),
+            state.openFiles.map(f => m("div.flex.items-center.justify-between.px-2.py-1", [
+              m("div.cursor-pointer.text-sm", { onclick: () => { state.activeFile = f; if (state.cmInstance) { state.cmInstance.setValue(state.project.files[f].content || ""); state.cmInstance.setOption("mode", modeFromFilename(f)); } } }, f),
+              m("div.flex.gap-1", [
+                m("button.btn.text-xs", { onclick: () => { buildAndInjectToIframe(f, document.getElementById("ruke-preview")); addConsoleLine("Ran " + f); } }, "Run"),
+                m("button.btn.text-xs", { onclick: () => { state.openFiles = state.openFiles.filter(x => x !== f); if (state.activeFile === f) state.activeFile = state.openFiles[0] || Object.keys(state.project.files)[0]; try { m.redraw(); } catch(e){} } }, "Close")
+              ])
+            ]))
+          ]),
+          m("div.glass.p-3", [
+            m("div.font-semibold.mb-2", "Terminal"),
+            m("div#term" , { style: "height:160px;overflow:hidden" })
+          ])
+        ]);
+      }
+    };
+
+    const AppRoot = {
+      oncreate() {
+        // initialise terminal and editor after DOM ready
+        setTimeout(() => {
+          initTerminal(document.getElementById('term'));
+          // set up initial iframe content
+          buildAndInjectToIframe(state.activeFile || "index.html", document.getElementById("ruke-preview"));
+        }, 120);
+      },
+      view() {
+        return m("div.h-full.flex.gap-4", [
+          m("aside.w-64.flex.flex-col.gap-2", [
+            m(FileList)
+          ]),
+          m("main.flex-1.flex.flex-col.glass.p-0.h-full", [
+            m(EditorPane),
+            m("div.h-48.border-t.border-[rgba(255,255,255,0.04)]", m(PreviewConsolePanel))
+          ]),
+          m(RightTools)
+        ]);
+      }
+    };
+
+    /* ---------- Boot & initialize ---------- */
+    function boot() {
+      loadSettings();
+      loadProject();
+      // ensure project structure
+      state.project = state.project || JSON.parse(JSON.stringify(DEFAULT_PROJECT));
+      state.openFiles = state.openFiles && state.openFiles.length ? state.openFiles : Object.keys(state.project.files).slice(0, 4);
+      state.activeFile = state.activeFile || Object.keys(state.project.files)[0];
+      // mount UI
+      m.mount(document.getElementById("app"), AppRoot);
+      // defer editor init slightly for stable layout
+      setTimeout(() => {
+        const holder = document.getElementById("editor-holder");
+        if (holder) initCodeMirror(holder);
+        const termEl = document.getElementById("term");
+        if (termEl) initTerminal(termEl);
+      }, 250);
+    }
+
+    boot();
+
+    // Expose debug helpers
+    window.RUKE = {
+      state,
+      persistProject,
+      buildAndInjectToIframe,
+      addConsoleLine,
+      agent_parseQueryToTodos,
+      agent_executeTodos
+    };
+
+  })();
+  </script>
+</body>
+</html>

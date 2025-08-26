@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ultra AI IDE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+<style>
+html, body { margin:0; height:100%; font-family:sans-serif; background:#111; color:white; }
+#ai-panel { height:25%; padding:10px; border-bottom:1px solid #444; }
+#todo-list { margin-top:10px; max-height:80px; overflow:auto; }
+#file-manager { height:10%; border-bottom:1px solid #444; display:flex; align-items:center; gap:10px; padding:5px; }
+#editor-console { height:45%; display:flex; }
+#editor, #console { width:50%; height:100%; border:1px solid #555; }
+#live-preview { height:20%; border-top:1px solid #444; padding:5px; position:relative; }
+#preview { width:100%; height:100%; border:1px solid #555; }
+.hidden { display:none; }
+.btn { padding:5px 10px; border-radius:4px; cursor:pointer; }
+.message { display:flex; margin:5px 0; }
+.message.bot { justify-content:flex-start; }
+.message.user { justify-content:flex-end; }
+.avatar { width:30px; height:30px; display:flex; align-items:center; justify-content:center; margin:0 5px; }
+.bubble { max-width:70%; padding:5px 10px; border-radius:10px; background:#222; position:relative; }
+.timestamp { font-size:0.6em; color:#888; margin-left:5px; }
+</style>
+</head>
+<body>
+
+<!-- Hamburger File Menu -->
+<div class="absolute top-2 left-2">
+  <button id="hamburger" class="btn bg-gray-700">☰ Files</button>
+</div>
+
+<!-- File Manager -->
+<div id="file-manager" class="hidden bg-gray-800">
+  <button id="new-file" class="btn bg-green-600">New</button>
+  <button id="delete-file" class="btn bg-red-600 hidden">Delete</button>
+  <div id="file-list" class="ml-4 flex-1 overflow-x-auto flex gap-2"></div>
+</div>
+
+<!-- AI Assistant -->
+<div id="ai-panel">
+  <textarea id="query" class="w-full h-16 p-2 bg-gray-900 text-white" placeholder="Ask AI anything..."></textarea>
+  <div class="mt-2 flex gap-2">
+    <button id="send" class="btn bg-blue-600">Send</button>
+    <button id="reform" class="btn bg-yellow-600">Reform</button>
+    <button id="theme-toggle" class="btn bg-gray-600">Theme</button>
+  </div>
+  <div id="todo-list"></div>
+</div>
+
+<!-- Editor + Console -->
+<div id="editor-console">
+  <div id="editor"></div>
+  <div id="console"></div>
+</div>
+
+<!-- Live Preview -->
+<div id="live-preview">
+  <iframe id="preview"></iframe>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/langchain.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/split.js/dist/split.min.js"></script>
+
+<script>
+const API_KEY = "AIzaSyDATuXl_5gMVK4ULJiH3hvZ4PGHsDQhD0c";
+
+// ----------------- Editor + Console -----------------
+Split(['#editor','#console'], { sizes:[50,50], gutterSize:6 });
+const editor = CodeMirror(document.getElementById('editor'), { lineNumbers:true, mode:'javascript', theme:'material' });
+const consoleEl = document.getElementById('console');
+function logConsole(msg){ consoleEl.innerHTML += `<div>${msg}</div>`; consoleEl.scrollTop = consoleEl.scrollHeight; }
+
+// ----------------- File Manager -----------------
+const fileManager = document.getElementById('file-manager');
+const files = []; const fileListDiv = document.getElementById('file-list');
+function refreshFiles(){ fileListDiv.innerHTML = files.map(f=>`<div>${f}</div>`).join(''); }
+document.getElementById('new-file').onclick = ()=>{
+  const fname = prompt('New file name');
+  if(fname){ files.push(fname); refreshFiles(); }
+};
+document.getElementById('hamburger').onclick = ()=>fileManager.classList.toggle('hidden');
+
+// ----------------- AI Assistant -----------------
+const todoList = document.getElementById('todo-list');
+let taskQueue = [];
+
+function addMessage(text, sender){
+  const chatBox = todoList;
+  const msg = document.createElement('div'); msg.classList.add('message', sender);
+  const avatar = document.createElement('div'); avatar.classList.add('avatar'); avatar.innerHTML = sender==='user'? '👤':'🤖';
+  const bubble = document.createElement('div'); bubble.classList.add('bubble'); bubble.innerHTML = text;
+  if(sender==='user'){ msg.appendChild(bubble); msg.appendChild(avatar); } else { msg.appendChild(avatar); msg.appendChild(bubble); }
+  chatBox.appendChild(msg); chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// ----------------- Gemini API -----------------
+async function getGeminiResponse(prompt){
+  try{
+    const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}]})
+    });
+    const data = await resp.json();
+    if(data.candidates && data.candidates.length>0) return data.candidates[0].content.parts[0].text;
+    return "⚠️ No valid response from Gemini";
+  } catch(e){ console.error(e); return "⚠️ Connection error"; }
+}
+
+// ----------------- AI Loop -----------------
+async function executeTask(task){
+  if(task.type==='editor'){ editor.setValue(task.code); return `Editor updated with ${task.code.length} chars`; }
+  if(task.type==='console'){ logConsole(task.cmd); return `Console command executed`; }
+  if(task.type==='preview'){ document.getElementById('preview').srcdoc = task.code; return `Preview updated`; }
+  return 'Task skipped';
+}
+
+async function aiLoop(){
+  while(taskQueue.length>0){
+    const task = taskQueue.shift();
+    const result = await executeTask(task);
+    logConsole(result);
+    const followUps = await getGeminiResponse("Follow-ups for: "+result);
+    if(followUps) taskQueue.push({type:'editor', code:followUps});
+  }
+}
+
+// ----------------- Event Listeners -----------------
+document.getElementById('send').onclick = async ()=>{
+  const query = document.getElementById('query').value.trim();
+  if(!query) return;
+  addMessage(query,'user');
+  const aiPlan = await getGeminiResponse(query);
+  addMessage(aiPlan,'bot');
+  // Add plan to task queue (demo: update editor & preview)
+  taskQueue.push({type:'editor', code:aiPlan});
+  taskQueue.push({type:'preview', code:aiPlan});
+  aiLoop();
+};
+
+document.getElementById('reform').onclick = ()=>{
+  const q = document.getElementById('query').value;
+  document.getElementById('query').value = `Please rephrase: ${q}`;
+};
+
+// ----------------- Theme Toggle -----------------
+function setTheme(mode){
+  if(mode==='dark'){ document.body.classList.add('dark'); localStorage.setItem('theme','dark'); }
+  else{ document.body.classList.remove('dark'); localStorage.setItem('theme','light'); }
+}
+setTheme(localStorage.getItem('theme')|| (window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+document.getElementById('theme-toggle').onclick = ()=>setTheme(document.body.classList.contains('dark')?'light':'dark');
+</script>
+</body>
+</html>

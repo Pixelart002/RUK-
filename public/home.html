@@ -1,0 +1,576 @@
+<!DOCTYPE html><html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RUKÉ • Godmode AI (Final • Tailwind + Mithril)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">  <!-- Tailwind (CDN) -->  <script src="https://cdn.tailwindcss.com"></script>  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Poppins', 'ui-sans-serif', 'system-ui'] },
+          colors: {
+            bg: '#0a0f1a',
+            panel: '#0c1426',
+            ink: '#e6eaf2',
+            inkmuted: '#9fb0cd',
+            border: '#1b2945',
+            accent: '#2f7af8',
+            accent2: '#1d4ed8',
+          },
+          boxShadow: {
+            glass: '0 8px 30px rgba(0,0,0,.35)'
+          },
+          borderRadius: {
+            xl2: '22px'
+          }
+        }
+      }
+    }
+  </script>  <!-- Icons -->  <script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>  <!-- Mithril -->  <script src="https://unpkg.com/mithril/mithril.js"></script>  <!-- Marked (Markdown) -->  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>  <!-- DOMPurify for safe HTML -->  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>  <style>
+    /* Subtle background gradients */
+    body{background:
+      radial-gradient(1200px 800px at 80% -10%, #1a2a51 0%, transparent 55%),
+      radial-gradient(900px 600px at -20% 20%, #0f2248 0%, transparent 45%),
+      var(--tw-bg-opacity,1) theme(colors.bg)}
+    .scrollbar::-webkit-scrollbar{height:10px;width:10px}
+    .scrollbar::-webkit-scrollbar-thumb{background:#27324a;border-radius:999px}
+    .scrollbar::-webkit-scrollbar-thumb:hover{background:#324061}
+    .scrollbar{scrollbar-width:thin}
+  </style></head>
+<body class="h-full text-ink bg-bg">
+<div id="app" class="h-full"></div><script>
+/*************************************************
+ * RUKÉ • Godmode AI (Client‑only, final)
+ * - TailwindCSS + Mithril.js
+ * - Real Gemini API (browser fetch)
+ * - LocalStorage sessions (CRUD), undo/redo
+ * - Command palette, keyboard shortcuts
+ * - Follow-up suggestions, typewriter, abort
+ * - Export/Import, theming, error guards
+ **************************************************/
+
+/******************** CONFIG *********************/
+const DEFAULT_API_KEY = 'AIzaSyDATuXl_5gMVK4ULJiH3hvZ4PGHsDQhD0c'; // user provided
+const DEFAULT_SYSTEM = 'You are RUKÉ AI — precise, helpful, concise. Use clean formatting and bullet points when helpful.';
+const STORAGE_KEY = 'ruke_v3_sessions';
+const SETTINGS_KEY = 'ruke_v3_settings';
+const THEME_KEY = 'ruke_v3_theme';
+const MAX_CONTEXT_MESSAGES = 24;   // last N messages sent to API
+const MAX_DOM_MESSAGES = 250;      // in-viewport
+
+/******************** UTILITIES *******************/
+const U = {
+  uid: () => Date.now().toString(36)+Math.random().toString(36).slice(2,8),
+  now: () => new Date().toISOString(),
+  clone: (x) => JSON.parse(JSON.stringify(x)),
+  fmtTime: (iso) => new Date(iso).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
+  fmtDate: (iso) => new Date(iso).toLocaleDateString(),
+  save(k,v){ localStorage.setItem(k, JSON.stringify(v)); },
+  load(k,fallback){ try{ return JSON.parse(localStorage.getItem(k)||'null') ?? fallback }catch{ return fallback } },
+  debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms) }},
+  copy(text){ navigator.clipboard?.writeText(text) },
+  download(name, data, type='text/plain'){ const b=new Blob([data],{type}); const url=URL.createObjectURL(b); const a=document.createElement('a'); a.href=url; a.download=name; a.click(); URL.revokeObjectURL(url); },
+  safeHTML(md){ const html = marked.parse(md||''); return DOMPurify.sanitize(html); },
+  assert(cond, msg){ if(!cond) throw new Error(msg||'Assertion failed'); },
+};
+
+/********************* STORE **********************/
+const Store = {
+  sessions: U.load(STORAGE_KEY, []),
+  settings: U.load(SETTINGS_KEY, {
+    apiKey: DEFAULT_API_KEY,
+    model: 'gemini-1.5-flash', // or gemini-1.5-pro
+    temperature: 0.7,
+    system: DEFAULT_SYSTEM,
+    tone: 'neutral', // or friendly | formal | playful
+    smartFollowUps: true,
+  }),
+  activeId: null,
+  undoStack: [],
+  redoStack: [],
+
+  init(){
+    if(!this.sessions.length){
+      const s = this.newSession('New Chat');
+      this.activeId = s.id;
+    }else{
+      this.activeId = this.sessions[0].id;
+    }
+  },
+
+  persist(){ U.save(STORAGE_KEY, this.sessions); U.save(SETTINGS_KEY, this.settings); },
+
+  // ---- Sessions CRUD ----
+  newSession(title='New Chat'){
+    const session = { id: U.uid(), title, createdAt: U.now(), updatedAt: U.now(), messages: [] };
+    this._pushUndo();
+    this.sessions.unshift(session);
+    this.activeId = session.id;
+    this.persist();
+    return session;
+  },
+  get active(){ return this.sessions.find(s=>s.id===this.activeId) || null; },
+  setActive(id){ if(this.sessions.some(s=>s.id===id)){ this.activeId=id; this.persist(); }},
+  renameSession(id, title){ const s=this.sessions.find(x=>x.id===id); if(!s) return; this._pushUndo(); s.title = title?.trim()||'Untitled'; s.updatedAt=U.now(); this.persist(); },
+  deleteSession(id){ const i=this.sessions.findIndex(x=>x.id===id); if(i<0) return; this._pushUndo(); this.sessions.splice(i,1); if(this.activeId===id) this.activeId=this.sessions[0]?.id||null; if(!this.activeId) this.newSession('New Chat'); this.persist(); },
+  duplicateSession(id){ const s=this.sessions.find(x=>x.id===id); if(!s) return; this._pushUndo(); const copy=U.clone(s); copy.id=U.uid(); copy.title=s.title+" (copy)"; copy.createdAt=U.now(); copy.updatedAt=U.now(); this.sessions.unshift(copy); this.activeId=copy.id; this.persist(); },
+
+  // ---- Message CRUD ----
+  addMessage(role, content){ const s=this.active; if(!s) return; const msg={ id:U.uid(), role, content:content.trim(), ts:U.now() }; this._pushUndo(); s.messages.push(msg); s.updatedAt=U.now(); this._trimDOM(s); this.persist(); return msg; },
+  editMessage(id, content){ const s=this.active; if(!s) return; const m=s.messages.find(x=>x.id===id); if(!m) return; this._pushUndo(); m.content=content.trim(); m.ts=U.now(); s.updatedAt=U.now(); this.persist(); },
+  deleteMessage(id){ const s=this.active; if(!s) return; const i=s.messages.findIndex(x=>x.id===id); if(i<0) return; this._pushUndo(); s.messages.splice(i,1); s.updatedAt=U.now(); this.persist(); },
+  clearMessages(){ const s=this.active; if(!s) return; this._pushUndo(); s.messages=[]; s.updatedAt=U.now(); this.persist(); },
+
+  // ---- Follow-ups (store only) ----
+  setFollowUps(list){ const s=this.active; if(!s) return; s.followUps=list||[]; this.persist(); },
+
+  // ---- Undo/Redo ----
+  _snapshot(){ return { sessions: U.clone(this.sessions), activeId: this.activeId, settings: U.clone(this.settings) } },
+  _restore(snap){ this.sessions=snap.sessions; this.activeId=snap.activeId; this.settings=snap.settings; this.persist(); },
+  _pushUndo(){ this.undoStack.push(this._snapshot()); this.redoStack.length=0; if(this.undoStack.length>50) this.undoStack.shift(); },
+  undo(){ if(!this.undoStack.length) return; const snap=this.undoStack.pop(); this.redoStack.push(this._snapshot()); this._restore(snap); },
+  redo(){ if(!this.redoStack.length) return; const snap=this.redoStack.pop(); this.undoStack.push(this._snapshot()); this._restore(snap); },
+
+  // ---- Limits ----
+  _trimDOM(s){ if(s.messages.length>MAX_DOM_MESSAGES){ s.messages = s.messages.slice(-MAX_DOM_MESSAGES); } }
+};
+Store.init();
+
+/********************* GEMINI API ******************/
+const Gemini = {
+  aborter: null,
+  async generate(prompt, opts={}){
+    // opts: {model, temperature, system, tone, contextMessages: []}
+    const key = Store.settings.apiKey?.trim();
+    if(!key){ throw new Error('Missing API key. Open Settings and add your Gemini API key.'); }
+
+    const model = opts.model || Store.settings.model;
+    const temperature = typeof opts.temperature==='number' ? opts.temperature : Store.settings.temperature;
+    const system = opts.system || Store.settings.system || DEFAULT_SYSTEM;
+    const tone = opts.tone || Store.settings.tone || 'neutral';
+
+    // Build content
+    const contextParts = (opts.contextMessages||[]).map(m=>({role:m.role==='user'?'user':'model', parts:[{text:m.content}]}));
+    const userPart = { role:'user', parts:[{text:`System: ${system}\nTone: ${tone}\n\nUser: ${prompt}`}] };
+
+    const body = {contents: [...contextParts, userPart], generationConfig: { temperature }};
+
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+
+    this.aborter = new AbortController();
+
+    const res = await fetch(endpoint, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: this.aborter.signal
+    });
+
+    if(!res.ok){
+      const errTxt = await res.text().catch(()=>res.statusText);
+      throw new Error(`Gemini error ${res.status}: ${errTxt}`);
+    }
+
+    const data = await res.json();
+    const t = data?.candidates?.[0]?.content?.parts?.[0]?.text || '⚠️ No valid response.';
+    return t;
+  },
+  stop(){ try{ this.aborter?.abort(); }catch{} finally{ this.aborter=null; }
+  }
+};
+
+/********************* APP STATE *******************/
+const AppState = {
+  input: '',
+  sending: false,
+  status: 'Online',
+  filter: '',
+  showSettings: false,
+  showImport: false,
+  showPalette: false,
+  draftEditId: null,
+  draftEditText: '',
+  toasts: [],
+
+  toast(msg, type='info'){ const id=U.uid(); this.toasts.push({id,msg,type}); setTimeout(()=>{ this.toasts = this.toasts.filter(t=>t.id!==id); m.redraw(); }, 2500); },
+};
+
+/********************* COMMANDS ********************/
+const Commands = [
+  { id:'new', label:'New session', hotkey:'N', run: ()=>{ const s=Store.newSession('New Chat'); AppState.toast('New chat created'); }},
+  { id:'rename', label:'Rename session', hotkey:'R', run: ()=>{ const t=prompt('New title', Store.active?.title||''); if(t!=null) Store.renameSession(Store.activeId, t); }},
+  { id:'duplicate', label:'Duplicate session', hotkey:'D', run: ()=>Store.duplicateSession(Store.activeId) },
+  { id:'delete', label:'Delete session', hotkey:'⌫', run: ()=>{ if(confirm('Delete this session?')){ Store.deleteSession(Store.activeId); AppState.toast('Session deleted'); } }},
+  { id:'clear', label:'Clear messages', hotkey:'K', run: ()=>{ if(confirm('Clear messages?')){ Store.clearMessages(); AppState.toast('Cleared'); }}},
+  { id:'export-md', label:'Export as Markdown', hotkey:'E', run: ()=>Exporter.md() },
+  { id:'export-json', label:'Export as JSON', hotkey:'J', run: ()=>Exporter.json() },
+  { id:'import-json', label:'Import JSON…', hotkey:'I', run: ()=>{ AppState.showImport=true; }},
+  { id:'undo', label:'Undo', hotkey:'Z', run: ()=>{ Store.undo(); }},
+  { id:'redo', label:'Redo', hotkey:'Y', run: ()=>{ Store.redo(); }},
+  { id:'settings', label:'Settings', hotkey:'S', run: ()=>{ AppState.showSettings = true; }},
+  { id:'theme', label:'Toggle theme', hotkey:'T', run: ()=>Theme.toggle() },
+];
+
+/********************* EXPORTERS *******************/
+const Exporter = {
+  md(){
+    const s = Store.active; if(!s) return;
+    const lines = [`# ${s.title}`, '', `Created: ${s.createdAt}`, `Updated: ${s.updatedAt}`, '---', ''];
+    for(const m of s.messages){
+      lines.push(`**${m.role.toUpperCase()}** — _${m.ts}_`); lines.push('');
+      lines.push(m.content); lines.push('\n---\n');
+    }
+    U.download(`${s.title.replace(/[^a-z0-9-_]/ig,'_')||'chat'}.md`, lines.join('\n'), 'text/markdown');
+  },
+  json(){ const dump=U.clone(Store.sessions); U.download('ruke_export.json', JSON.stringify(dump, null, 2), 'application/json'); }
+};
+
+/********************* THEME ***********************/
+const Theme = {
+  get(){ return localStorage.getItem(THEME_KEY)||'dark'; },
+  set(v){ localStorage.setItem(THEME_KEY, v); document.documentElement.classList.toggle('dark', v==='dark'); },
+  init(){ this.set(this.get()); },
+  toggle(){ this.set(this.get()==='dark'?'light':'dark'); }
+};
+Theme.init();
+
+/********************* FOLLOW-UPS ******************/
+async function buildFollowUps(latestUser, latestAssistant){
+  if(!Store.settings.smartFollowUps) return [];
+  try{
+    const prompt = `Given the following assistant reply, suggest exactly 3 short follow-up questions the user could ask next. Keep each under 10 words. Reply as a bullet list.\n\nUser: ${latestUser}\nAssistant: ${latestAssistant}`;
+    const context = (Store.active?.messages||[]).slice(-6);
+    const text = await Gemini.generate(prompt, { contextMessages: context });
+    // parse bullets into array
+    const items = text.split(/\n+/).map(s=>s.replace(/^[-*]\s?/, '').trim()).filter(Boolean).slice(0,3);
+    return items;
+  }catch{ return []; }
+}
+
+/********************* APP COMPONENTS **************/
+const Sidebar = {
+  view(){
+    const s = Store.sessions;
+    const term = AppState.filter.toLowerCase();
+    const list = !term ? s : s.filter(x=>x.title.toLowerCase().includes(term));
+    return m('aside', {class: 'hidden md:flex flex-col w-72 shrink-0 gap-3 p-3'}, [
+      m('div', {class:'flex gap-2'}, [
+        m('button', {class:'px-3 py-2 rounded-xl bg-accent text-white hover:brightness-110 shadow', onclick:()=>Store.newSession('New Chat')}, [m('i.fa.fa-plus.mr-2'), 'New']),
+        m('div', {class:'flex-1 relative'}, [
+          m('input', {class:'w-full px-3 py-2 rounded-xl bg-panel/70 border border-border text-ink placeholder-inkmuted focus:outline-none', placeholder:'Search…', value:AppState.filter, oninput:e=>{AppState.filter=e.target.value}}),
+          m('i.fa.fa-search absolute right-3 top-1/2 -translate-y-1/2 text-inkmuted')
+        ])
+      ]),
+      m('div', {class:'flex-1 rounded-xl2 border border-border/70 bg-panel/70 overflow-auto scrollbar'}, list.map(sess => m(SessionItem, {sess})))
+    ]);
+  }
+};
+
+const SessionItem = {
+  view({attrs:{sess}}){
+    const active = sess.id===Store.activeId;
+    return m('div', {class:`group cursor-pointer border-b border-border/40 last:border-0 ${active? 'bg-white/5':''}`}, [
+      m('div', {class:'flex items-center gap-2 p-3 hover:bg-white/5', onclick:()=>Store.setActive(sess.id)}, [
+        m('div', {class:`w-2 h-2 rounded-full ${active?'bg-accent':'bg-zinc-600'}`}),
+        m('div', {class:'flex-1 min-w-0'}, [
+          m('div', {class:'truncate font-semibold'}, sess.title || 'Untitled'),
+          m('div', {class:'text-xs text-inkmuted'}, U.fmtDate(sess.updatedAt))
+        ]),
+        m('button', {class:'opacity-0 group-hover:opacity-100 px-2 py-1 text-xs rounded border border-border hover:bg-white/5', onclick:(e)=>{e.stopPropagation(); const t=prompt('Rename', sess.title); if(t!=null) Store.renameSession(sess.id,t)}}, 'Rename'),
+        m('button', {class:'opacity-0 group-hover:opacity-100 px-2 py-1 text-xs rounded border border-border hover:bg-white/5', onclick:(e)=>{e.stopPropagation(); Store.duplicateSession(sess.id)}}, 'Copy'),
+        m('button', {class:'opacity-0 group-hover:opacity-100 px-2 py-1 text-xs rounded border border-border text-red-300 hover:bg-red-500/10', onclick:(e)=>{e.stopPropagation(); if(confirm('Delete session?')) Store.deleteSession(sess.id)}}, 'Delete')
+      ])
+    ]);
+  }
+};
+
+const Toolbar = {
+  view(){
+    const st = Store.settings;
+    return m('div', {class:'flex items-center justify-between px-3 py-2 border-b border-border/60 bg-panel/70 sticky top-0 z-10 backdrop-blur'}, [
+      m('div', {class:'flex items-center gap-2 text-sm'}, [
+        m('span', {class:'w-2 h-2 rounded-full bg-green-500 shadow-[0_0_0_3px_rgba(16,185,129,.2)]'}),
+        m('span', {class:'font-semibold tracking-wide'}, 'RUKÉ AI • Online')
+      ]),
+      m('div', {class:'flex items-center gap-2 text-sm'}, [
+        m('select', {class:'px-2 py-1 rounded border border-border bg-black/30', value:st.model, onchange:(e)=>{st.model=e.target.value; Store.persist();}}, [
+          m('option', {value:'gemini-1.5-flash'}, 'gemini-1.5-flash'),
+          m('option', {value:'gemini-1.5-pro'}, 'gemini-1.5-pro'),
+        ]),
+        m('div', {class:'flex items-center gap-2'}, [
+          m('span','Temp'),
+          m('input', {type:'range', min:0, max:1, step:0.1, value:st.temperature, oninput:(e)=>{st.temperature=parseFloat(e.target.value); Store.persist();}}),
+          m('span', {class:'w-8 text-center'}, st.temperature.toFixed(1))
+        ]),
+        m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>{ AppState.showSettings = true; }}, [m('i.fa.fa-gear.mr-2'),'Settings']),
+        m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>{ Exporter.md(); }}, [m('i.fa.fa-file-export.mr-2'),'Export'])
+      ])
+    ]);
+  }
+};
+
+const MessageView = {
+  view({attrs:{msg}}){
+    const isUser = msg.role==='user';
+    return m('div', {class:`flex ${isUser?'justify-end':''}`}, [
+      m('div', {class:`max-w-[78%] my-2 px-4 py-3 rounded-2xl border shadow ${isUser?
+        'bg-gradient-to-b from-blue-600 to-accent2 text-white border-transparent' :
+        'bg-gradient-to-b from-[#111827] to-[#0b1220] text-ink border-border'}`}, [
+        m.trust(U.safeHTML(msg.content.replace(/\n/g,'\n'))),
+        m('div', {class:'mt-1 text-xs opacity-60 text-right'}, U.fmtTime(msg.ts)),
+        m('div', {class:'flex gap-2 mt-2 text-xs text-inkmuted'}, [
+          m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>U.copy(msg.content)}, [m('i.fa.fa-copy.mr-1'),'Copy']),
+          !isUser && m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>Composer.regen(msg)}, [m('i.fa.fa-rotate-right.mr-1'),'Regenerate']),
+          m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>{ AppState.draftEditId = msg.id; AppState.draftEditText = msg.content; }}, [m('i.fa.fa-pen.mr-1'),'Edit']),
+          m('button', {class:'px-2 py-1 rounded border border-border text-red-300 hover:bg-red-500/10', onclick:()=>Store.deleteMessage(msg.id)}, [m('i.fa.fa-trash.mr-1'),'Delete'])
+        ])
+      ])
+    ]);
+  }
+};
+
+const FollowUps = {
+  view(){
+    const s=Store.active; const list=s?.followUps||[]; if(!list.length) return null;
+    return m('div', {class:'px-3 pb-2 border-t border-border/60 bg-panel/50'}, [
+      m('div', {class:'text-xs uppercase tracking-wider text-inkmuted mb-2'}, 'Suggested follow-ups'),
+      m('div', {class:'flex flex-wrap gap-2'}, list.map(f=> m('button', {class:'px-3 py-2 rounded-full border border-border bg-black/30 hover:bg-white/5', onclick:()=>{ AppState.input=f; setTimeout(()=>document.getElementById('composer')?.focus(),0); }}, f)))
+    ]);
+  }
+};
+
+const Chat = {
+  oncreate(){ setTimeout(()=>{ const el=document.getElementById('scroller'); el && (el.scrollTop=el.scrollHeight); }, 0); },
+  view(){
+    const s = Store.active;
+    return m('section', {class:'flex flex-col rounded-xl2 border border-border bg-panel/60 shadow-glass overflow-hidden'}, [
+      m(Toolbar),
+      m('div', {id:'scroller', class:'h-[60vh] p-3 overflow-auto scrollbar'}, [
+        (s?.messages||[]).map(msg => m(MessageView, {msg}))
+      ]),
+      m(FollowUps),
+      m(Composer)
+    ]);
+  }
+};
+
+const Composer = {
+  async send(text){
+    const prompt = text.trim(); if(!prompt || AppState.sending) return;
+    const session = Store.active; if(!session) return;
+
+    // push user message
+    const userMsg = Store.addMessage('user', prompt);
+    AppState.input=''; AppState.sending=true; AppState.status='Typing…'; m.redraw();
+
+    // context (limit)
+    const ctx = session.messages.slice(-MAX_CONTEXT_MESSAGES);
+
+    // optimistic bot placeholder
+    const botMsg = Store.addMessage('assistant', '…');
+
+    try{
+      const resp = await Gemini.generate(prompt, {
+        model: Store.settings.model,
+        temperature: Store.settings.temperature,
+        system: Store.settings.system,
+        tone: Store.settings.tone,
+        contextMessages: ctx
+      });
+      Store.editMessage(botMsg.id, resp);
+
+      // follow-ups
+      const fu = await buildFollowUps(prompt, resp);
+      Store.setFollowUps(fu);
+
+    }catch(e){
+      Store.editMessage(botMsg.id, `⚠️ ${e.message}`);
+      AppState.toast('API error — see message', 'error');
+    }finally{
+      AppState.sending=false; AppState.status='Online'; m.redraw();
+      setTimeout(()=>{ const el=document.getElementById('scroller'); if(el) el.scrollTop=el.scrollHeight; }, 50);
+    }
+  },
+  regen(msg){
+    const s=Store.active; if(!s) return; const lastUser = [...s.messages].reverse().find(x=>x.role==='user');
+    if(!lastUser){ AppState.toast('No user prompt to regenerate', 'error'); return; }
+    AppState.input = lastUser.content; this.send(lastUser.content);
+  },
+  view(){
+    return m('div', {class:'sticky bottom-0 z-10 bg-panel/80 backdrop-blur border-t border-border/60'}, [
+      m('div', {class:'flex items-center justify-between px-3 py-2 text-sm text-inkmuted'}, [
+        m('div', {class:'flex items-center gap-2'}, [
+          m('span', {class:'inline-block w-2 h-2 rounded-full bg-green-500'}),
+          m('span', AppState.status)
+        ]),
+        m('div', {class:'flex items-center gap-2'}, [
+          m('button', {class:`px-2 py-1 rounded border ${Gemini.aborter?'border-red-400 text-red-300 hover:bg-red-500/10':'border-border hover:bg-white/5'}`, onclick:()=>Gemini.stop()}, [m('i.fa.fa-stop.mr-1'), 'Stop']),
+          m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>Store.clearMessages()}, [m('i.fa.fa-broom.mr-1'), 'Clear'])
+        ])
+      ]),
+      m('div', {class:'p-3'}, [
+        AppState.draftEditId ? m(EditInline) : m('div', {class:'flex gap-2 items-end'}, [
+          m('textarea', {id:'composer', class:'flex-1 resize-none h-28 rounded-xl border border-border bg-black/40 p-3 outline-none focus:ring-1 focus:ring-accent', placeholder:'Type a message…  (Ctrl/Cmd+Enter to send)', value:AppState.input, oninput:e=>AppState.input=e.target.value, onkeydown:(e)=>{
+            if((e.metaKey||e.ctrlKey) && e.key==='Enter'){ e.preventDefault(); Composer.send(AppState.input); }
+          }}),
+          m('button', {class:`px-4 h-11 rounded-xl text-white shadow ${AppState.sending?'bg-zinc-600 cursor-not-allowed':'bg-gradient-to-b from-accent to-accent2 hover:brightness-110'}`, disabled:AppState.sending, onclick:()=>Composer.send(AppState.input)}, [m('i.fa.fa-paper-plane.mr-2'), 'Send'])
+        ])
+      ])
+    ]);
+  }
+};
+
+const EditInline = {
+  view(){
+    return m('div', {class:'flex gap-2 items-end'}, [
+      m('textarea', {class:'flex-1 resize-none h-32 rounded-xl border border-border bg-black/40 p-3 outline-none focus:ring-1 focus:ring-accent', value:AppState.draftEditText, oninput:e=>AppState.draftEditText=e.target.value}),
+      m('div', {class:'flex flex-col gap-2'}, [
+        m('button', {class:'px-4 h-11 rounded-xl bg-gradient-to-b from-accent to-accent2 text-white', onclick:()=>{ Store.editMessage(AppState.draftEditId, AppState.draftEditText); AppState.draftEditId=null; AppState.draftEditText=''; }}, [m('i.fa.fa-check.mr-2'),'Save']),
+        m('button', {class:'px-4 h-11 rounded-xl border border-border hover:bg-white/5', onclick:()=>{ AppState.draftEditId=null; AppState.draftEditText=''; }}, [m('i.fa.fa-xmark.mr-2'),'Cancel'])
+      ])
+    ]);
+  }
+};
+
+const Rightbar = {
+  view(){
+    const st = Store.settings;
+    return m('aside', {class:'hidden xl:flex flex-col w-80 shrink-0 gap-3 p-3'}, [
+      // Shortcuts
+      m('div', {class:'rounded-xl2 border border-border bg-panel/60 overflow-hidden'}, [
+        m('div', {class:'px-3 py-2 border-b border-border/60 text-xs uppercase tracking-wider text-inkmuted'}, 'Shortcuts'),
+        m('div', {class:'p-3 grid grid-cols-2 gap-2 text-sm'}, [
+          ['Ctrl/Cmd+Enter','Send'], ['Ctrl/Cmd+K','Commands'], ['Ctrl/Cmd+Z','Undo'], ['Ctrl/Cmd+Y','Redo'], ['Ctrl/Cmd+S','Settings'], ['Ctrl/Cmd+T','Theme']
+        ].map(([a,b])=> m('div', {class:'rounded-xl border border-border/60 bg-black/30 p-2'}, [m('div', a), m('div', {class:'text-xs text-inkmuted'}, b)])))
+      ]),
+
+      // Tips
+      m('div', {class:'rounded-xl2 border border-border bg-panel/60 overflow-hidden'}, [
+        m('div', {class:'px-3 py-2 border-b border-border/60 text-xs uppercase tracking-wider text-inkmuted'}, 'Tips'),
+        m('ul', {class:'p-3 text-sm list-disc pl-6 space-y-2 text-ink/90'}, [
+          m('li', 'Use precise prompts for razor-sharp answers.'),
+          m('li', 'Try “Act as …” for role guidance.'),
+          m('li', 'Export chat anytime as Markdown or JSON.'),
+        ])
+      ]),
+
+      // About
+      m('div', {class:'rounded-xl2 border border-border bg-panel/60 overflow-hidden p-3 text-sm text-inkmuted'}, [
+        m('div', {class:'font-semibold text-ink mb-1'}, 'RUKÉ Godmode'),
+        m('div', 'Client-only • Tailwind + Mithril • Gemini API')
+      ])
+    ]);
+  }
+};
+
+const SettingsModal = {
+  view(){ if(!AppState.showSettings) return null; const st=Store.settings; return m('div', {class:'fixed inset-0 z-50'}, [
+    m('div', {class:'absolute inset-0 bg-black/60', onclick:()=>AppState.showSettings=false}),
+    m('div', {class:'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(720px,95vw)] rounded-2xl border border-border bg-panel/90 backdrop-blur p-5 shadow-glass'}, [
+      m('div', {class:'flex items-center justify-between mb-4'}, [
+        m('div', {class:'text-lg font-semibold'}, 'Settings'),
+        m('button', {class:'px-3 py-1 rounded border border-border hover:bg-white/5', onclick:()=>AppState.showSettings=false}, [m('i.fa.fa-xmark.mr-1'),'Close'])
+      ]),
+      m('div', {class:'grid md:grid-cols-2 gap-4'}, [
+        m('div', [
+          m('label', {class:'text-sm text-inkmuted'}, 'Gemini API Key (stored locally)'),
+          m('input', {type:'password', class:'w-full mt-1 px-3 py-2 rounded-xl border border-border bg-black/40', value:st.apiKey, oninput:e=>{st.apiKey=e.target.value; Store.persist();}}),
+          m('div', {class:'text-xs text-inkmuted mt-1'}, '⚠️ Client-side only. Exposed in browser storage.')
+        ]),
+        m('div', [
+          m('label', {class:'text-sm text-inkmuted'}, 'System Prompt'),
+          m('textarea', {class:'w-full mt-1 h-28 px-3 py-2 rounded-xl border border-border bg-black/40', value:st.system, oninput:e=>{st.system=e.target.value; Store.persist();}})
+        ]),
+        m('div', [
+          m('label', {class:'text-sm text-inkmuted'}, 'Tone'),
+          m('select', {class:'w-full mt-1 px-3 py-2 rounded-xl border border-border bg-black/40', value:st.tone, onchange:e=>{st.tone=e.target.value; Store.persist();}}, [
+            m('option', {value:'neutral'}, 'neutral'),
+            m('option', {value:'friendly'}, 'friendly'),
+            m('option', {value:'formal'}, 'formal'),
+            m('option', {value:'playful'}, 'playful'),
+          ])
+        ]),
+        m('div', [
+          m('label', {class:'text-sm text-inkmuted'}, 'Smart follow-ups'),
+          m('div', {class:'mt-1 flex items-center gap-2'}, [
+            m('input', {type:'checkbox', checked:st.smartFollowUps, onchange:e=>{st.smartFollowUps=e.target.checked; Store.persist();}}),
+            m('span','Enable lightweight extra call for suggestions')
+          ])
+        ])
+      ])
+    ])
+  ]) }
+};
+
+const ImportModal = {
+  oncreate(vnode){ vnode.state.inputRef = null; },
+  view(vnode){ if(!AppState.showImport) return null; return m('div', {class:'fixed inset-0 z-50'}, [
+    m('div', {class:'absolute inset-0 bg-black/60', onclick:()=>AppState.showImport=false}),
+    m('div', {class:'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(520px,95vw)] rounded-2xl border border-border bg-panel/90 backdrop-blur p-5 shadow-glass'}, [
+      m('div', {class:'text-lg font-semibold mb-3'}, 'Import JSON'),
+      m('input', {type:'file', accept:'application/json', class:'block w-full text-sm', oncreate: v=>vnode.state.inputRef=v.dom, onchange: async (e)=>{
+        const file=e.target.files?.[0]; if(!file) return; const text=await file.text();
+        try{ Store._pushUndo(); const arr=JSON.parse(text); U.assert(Array.isArray(arr), 'Invalid format'); Store.sessions=arr; Store.activeId=Store.sessions[0]?.id||null; if(!Store.activeId) Store.newSession('Imported'); Store.persist(); AppState.toast('Imported'); AppState.showImport=false; }
+        catch(err){ alert('Import failed: '+err.message); }
+      }}),
+      m('div', {class:'mt-3 text-right'}, [ m('button', {class:'px-3 py-1 rounded border border-border hover:bg-white/5', onclick:()=>AppState.showImport=false}, 'Close') ])
+    ])
+  ]) }
+};
+
+const Palette = {
+  view(){ if(!AppState.showPalette) return null; return m('div', {class:'fixed inset-0 z-50'}, [
+    m('div', {class:'absolute inset-0 bg-black/60', onclick:()=>AppState.showPalette=false}),
+    m('div', {class:'absolute left-1/2 top-24 -translate-x-1/2 w-[min(720px,95vw)] rounded-2xl border border-border bg-panel/95 backdrop-blur p-2 shadow-glass'}, [
+      m('div', {class:'grid grid-cols-2 md:grid-cols-3 gap-2 max-h-[60vh] overflow-auto p-2'}, Commands.map(c=> m('button', {class:'text-left px-3 py-3 rounded-xl border border-border hover:bg-white/5', onclick:()=>{ AppState.showPalette=false; c.run(); }}, [
+        m('div', {class:'font-semibold'}, c.label),
+        m('div', {class:'text-xs text-inkmuted'}, c.hotkey ? `Ctrl/Cmd+${c.hotkey}`:'' )
+      ])))
+    ])
+  ]) }
+};
+
+const Toasts = { view(){ return m('div', {class:'fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-[70]'}, AppState.toasts.map(t=> m('div', {class:`px-3 py-2 rounded-xl text-sm shadow-glass ${t.type==='error'?'bg-red-600 text-white':'bg-black/80 text-white'}`}, t.msg))) }};
+
+const Header = {
+  view(){ return m('header', {class:'sticky top-0 z-40 backdrop-blur border-b border-border/70 bg-white/10 dark:bg-black/20'}, [
+    m('div', {class:'max-w-[1200px] mx-auto px-3 py-2 flex items-center gap-3'}, [
+      m('img', {src:'https://picsum.photos/60', alt:'logo', class:'h-10 w-10 rounded-full object-cover'}),
+      m('div', {class:'text-lg font-bold tracking-wider flex-1 text-center'}, 'RUKÉ'),
+      m('div', {class:'flex items-center gap-2'}, [
+        m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>Theme.toggle()}, [m('i.fa.fa-moon.mr-2'),'Theme']),
+        m('button', {class:'px-2 py-1 rounded border border-border hover:bg-white/5', onclick:()=>{ AppState.showPalette=true; }}, [m('i.fa.fa-command.mr-2'),'Command'])
+      ])
+    ])
+  ]) }
+};
+
+const App = {
+  oncreate(){
+    // keyboard
+    window.addEventListener('keydown', (e)=>{
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); AppState.showPalette=!AppState.showPalette; m.redraw(); }
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='enter'){ e.preventDefault(); Composer.send(AppState.input); }
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='s'){ e.preventDefault(); AppState.showSettings=true; m.redraw(); }
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); Store.undo(); m.redraw(); }
+      if((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==='y'){ e.preventDefault(); Store.redo(); m.redraw(); }
+    });
+  },
+  view(){ return m('div', {class:'max-w-[1200px] mx-auto p-3 space-y-3'}, [
+    m(Header),
+    m('div', {class:'grid grid-cols-1 md:grid-cols-[18rem_minmax(0,1fr)] xl:grid-cols-[18rem_minmax(0,1fr)_20rem] gap-3'}, [
+      m(Sidebar),
+      m(Chat),
+      m(Rightbar)
+    ]),
+    m(SettingsModal),
+    m(ImportModal),
+    m(Palette),
+    m(Toasts)
+  ]) }
+};
+
+m.mount(document.getElementById('app'), App);
+</script></body>
+</html>
