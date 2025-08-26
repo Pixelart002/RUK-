@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Ultra Legendary Military IDE — AI Auto Dev (Final)</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+<!-- Split.js for draggable/resizable panes -->
+<script src="https://unpkg.com/split.js/dist/split.min.js"></script>
+
+<!-- xterm -->
+<link rel="stylesheet" href="https://unpkg.com/xterm/css/xterm.css"/>
+<script src="https://unpkg.com/xterm/lib/xterm.js"></script>
+
+<!-- Monaco loader -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs/loader.min.js"></script>
+
+
+<!-- Tailwind for quick styling -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- localForage for persistence -->
+
+
+<!-- Pyodide -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+
+<style>
+:root{
+  --bg:#071427; --panel:#0b1522; --muted:#98a2b3; --bright:#e6eef8; --accent:#60a5fa;
+}
+html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg),#041223);color:var(--bright);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial}
+.topbar{height:56px;display:flex;align-items:center;padding:8px 12px;background:#051324;border-bottom:1px solid rgba(255,255,255,0.04)}
+.brand{font-weight:700;margin-right:12px}
+.controls{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 10px;border-radius:8px;color:var(--bright);cursor:pointer}
+.btn.primary{background:linear-gradient(90deg,#2563eb,#7c3aed);border:none}
+.badge{font-size:12px;padding:6px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.06);color:var(--muted)}
+.status-dot{width:10px;height:10px;border-radius:999px;display:inline-block;margin-right:8px}
+.idle{background:#64748b}.ok{background:#22c55e}.err{background:#ef4444}
+
+#root{position:fixed;inset:56px 0 0 0;display:flex;flex-direction:column}
+.top-split{height:65%;display:flex;gap:10px;padding:12px}
+.bottom-split{height:35%;display:flex;gap:10px;padding:12px}
+.panel{background:var(--panel);border-radius:10px;padding:10px;box-shadow:0 6px 20px rgba(0,0,0,0.6);display:flex;flex-direction:column;overflow:hidden}
+.panel .title{font-size:12px;color:var(--muted);margin-bottom:8px}
+#file-list{overflow:auto;flex:1}
+.file-item{padding:6px;border-radius:6px;display:flex;justify-content:space-between;align-items:center;color:var(--bright);cursor:pointer}
+.file-item:hover{background:rgba(255,255,255,0.02)}
+#editor {flex:1;border-radius:8px;overflow:hidden}
+.log{font-family:ui-monospace,monospace;font-size:13px;color:var(--muted);white-space:pre-wrap;overflow:auto}
+.input{background:transparent;border:1px solid rgba(255,255,255,0.04);padding:8px;border-radius:8px;color:var(--bright)}
+.small{font-size:12px;color:var(--muted)}
+.badge-small{font-size:11px;padding:4px 8px;border-radius:999px;border:1px solid rgba(255,255,255,.04);color:var(--muted)}
+.term-wrapper{height:100%;width:100%;overflow:hidden;border-radius:8px}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Ultra Legendary Military IDE</div>
+    <div class="small">LangChain-style orchestration (Gemini) · WebContainers (Node) · Pyodide (Python) · Monaco · xterm</div>
+    <div class="controls">
+      <span class="badge"><span id="nodeDot" class="status-dot idle"></span>Node</span>
+      <span class="badge"><span id="pyDot" class="status-dot idle"></span>Python</span>
+      <button id="btnClear" class="btn">Clear Log</button>
+      <button id="btnPlan" class="btn">Plan</button>
+      <button id="btnRun" class="btn primary">Run AI Loop</button>
+    </div>
+  </div>
+
+  <div id="root">
+    <div class="top-split">
+      <div class="panel" style="width:220px;">
+        <div class="title">Files</div>
+        <div id="file-list"></div>
+        <div style="margin-top:8px;display:flex;gap:6px">
+          <button id="btnNewFile" class="btn">+ File</button>
+          <button id="btnExport" class="btn">Export</button>
+        </div>
+      </div>
+
+      <div class="panel" style="flex:1;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <input id="ideaInput" class="input" placeholder="Describe idea (e.g. Build a todo app)" />
+          <input id="apiInput" class="input" placeholder="Gemini API key (kept in memory)" style="width:360px" />
+          <button id="btnSave" class="btn">Save File</button>
+        </div>
+        <div id="editor" style="height:100%"></div>
+      </div>
+
+      <div class="panel" style="width:210px;">
+        <div class="title">AI Assistant / Plan</div>
+        <div id="ai-chat" class="log" style="height:50%;overflow:auto"></div>
+        <div style="margin-top:8px" class="small">Plan / status</div>
+        <div id="planView" class="log" style="height:45%;overflow:auto"></div>
+      </div>
+    </div>
+
+    <div class="bottom-split">
+      <div class="panel" style="flex:1;">
+        <div class="title">Terminal</div>
+        <div id="term" class="term-wrapper"></div>
+      </div>
+      <div class="panel" style="width:420px;">
+        <div class="title">Process Log</div>
+        <div id="procLog" class="log" style="height:100%;"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(async ()=>{
+
+/* =========================
+   CONFIG & SAFE DEFAULTS
+   ========================= */
+const CONFIG = {
+  GEMINI_API_KEY: "AIzaSyDATuXl_5gMVK4ULJiH3hvZ4PGHsDQhD0c",       // optionally set here
+  MODEL: "gemini-1.5-flash",
+  MAX_CYCLES: 6,
+  PERSIST_KEY: "ulm-ide-v1",
+  AI_TIMEOUT_MS: 30_000
+};
+
+/* =========================
+   STATE
+   ========================= */
+const state = {
+  files: {
+    "index.html": "<!doctype html><html><head><meta charset='utf-8'><title>App</title></head><body><div id='app'>Hello</div><script src='app.js'><\/script></body></html>",
+    "app.js": "console.log('app ready');",
+    "style.css": "body{font-family:sans-serif;margin:16px}"
+  },
+  currentFile: "index.html",
+  plan: null,
+  cycles: 0,
+  finished: false,
+  editor: null,
+  monaco: null,
+  term: null,
+  webcontainer: { available:false, instance:null },
+  pyodide: { ready:false, instance:null }
+};
+
+function writeln(msg){
+  if(state.term) state.term.writeln(msg);  // Terminal me print kare
+  appendProcLog(msg);                      // Process log me bhi add kare
+}
+
+
+
+
+
+
+
+
+/* =========================
+   UI HELPERS
+   ========================= */
+const fileListEl = document.getElementById("file-list");
+const planViewEl = document.getElementById("planView");
+const aiChatEl = document.getElementById("ai-chat");
+const procLogEl = document.getElementById("procLog");
+const apiInputEl = document.getElementById("apiInput");
+const ideaInputEl = document.getElementById("ideaInput");
+const nodeDot = document.getElementById("nodeDot");
+const pyDot = document.getElementById("pyDot");
+
+function appendProcLog(s){
+  procLogEl.textContent += `[${new Date().toLocaleTimeString()}] ${s}\n`;
+  procLogEl.scrollTop = procLogEl.scrollHeight;
+}
+function appendAI(s, who="AI"){
+  aiChatEl.textContent += `${who}: ${s}\n\n`;
+  aiChatEl.scrollTop = aiChatEl.scrollHeight;
+}
+function showPlan(obj){
+  if(!obj) { planViewEl.textContent = ""; return; }
+  try { planViewEl.textContent = JSON.stringify(obj, null, 2); } catch(e){ planViewEl.textContent = String(obj); }
+}
+function showFiles(){
+  fileListEl.innerHTML = "";
+  Object.keys(state.files).sort().forEach(path=>{
+    const d = document.createElement("div"); d.className="file-item";
+    d.innerHTML = `<span>${path}</span><span class="small">${(state.files[path]||"").split("\n").length} ln</span>`;
+    d.onclick = ()=> openFile(path);
+    fileListEl.appendChild(d);
+  });
+}
+
+/* =========================
+   PERSISTENCE (localForage)
+   ========================= */
+async function persist(){ try { await localforage.setItem(CONFIG.PERSIST_KEY, state.files); appendProcLog("Saved project to storage"); } catch(e){ appendProcLog("Persist error: "+e.message); } }
+async function restore(){ try { const saved = await localforage.getItem(CONFIG.PERSIST_KEY); if(saved && typeof saved==="object"){ state.files = saved; appendProcLog("Restored project from storage"); } } catch(e){ appendProcLog("Restore error: "+e.message); } }
+
+/* =========================
+   EDITOR (Monaco)
+   ========================= */
+function mountMonaco(containerEl){
+  return new Promise((resolve, reject)=>{
+    try{
+      window.require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.46.0/min/vs' }});
+      window.require(['vs/editor/editor.main'], () => {
+        state.monaco = monaco;
+        state.editor = monaco.editor.create(containerEl, {
+          value: state.files[state.currentFile] || "",
+          language: langFromPath(state.currentFile),
+          theme: "vs-dark",
+          automaticLayout: true,
+          minimap: { enabled:false },
+          fontSize: 14
+        });
+        state.editor.onDidChangeModelContent(()=> {
+          state.files[state.currentFile] = state.editor.getValue();
+        });
+        resolve();
+      });
+    }catch(err){
+      reject(err);
+    }
+  });
+}
+function langFromPath(p){
+  if(p.endsWith(".js")) return "javascript";
+  if(p.endsWith(".ts")) return "typescript";
+  if(p.endsWith(".css")) return "css";
+  if(p.endsWith(".html")) return "html";
+  if(p.endsWith(".py")) return "python";
+  return "plaintext";
+}
+function openFile(path){
+  state.currentFile = path;
+  if(state.editor){
+    const model = monaco.editor.createModel(state.files[path]||"", langFromPath(path));
+    state.editor.setModel(model);
+  }
+  showFiles();
+}
+
+/* =========================
+   TERMINAL (xterm)
+   ========================= */
+function mountTerminal(containerEl){
+  state.term = new Terminal({ convertEol:true, fontFamily:'monospace', fontSize:13 });
+  state.term.open(containerEl);
+  state.term.writeln("Ultra Legendary Terminal — ready");
+  state.term.onData(data => {
+    // For future interactive shell features
+  });
+}
+
+/* =========================
+   PREVIEW RENDER
+   ========================= */
+function renderPreview(){
+  // Optionally create a preview iframe later; for now show file saved
+  appendProcLog("Preview updated");
+}
+
+/* =========================
+   SAFE GEMINI CALL (with timeout and error handling)
+   ========================= */
+async function ensureApiKey(){
+  if(CONFIG.GEMINI_API_KEY) return CONFIG.GEMINI_API_KEY;
+  const v = (apiInputEl.value || "").trim();
+  if(v) { CONFIG.GEMINI_API_KEY = v; return v; }
+  const p = prompt("Paste your Gemini API key (kept in memory only)");
+  if(p) { CONFIG.GEMINI_API_KEY = p.trim(); return CONFIG.GEMINI_API_KEY; }
+  throw new Error("API key required");
+}
+
+async function geminiCall(prompt, timeoutMs = CONFIG.AI_TIMEOUT_MS){
+  const key = await ensureApiKey();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${CONFIG.MODEL}:generateContent?key=${encodeURIComponent(key)}`;
+  const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+  appendProcLog("Calling Gemini...");
+  try{
+    const controller = new AbortController();
+    const id = setTimeout(()=> controller.abort(), timeoutMs);
+    const res = await fetch(url, { method:"POST", headers: { "Content-Type":"application/json" }, signal: controller.signal, body: JSON.stringify(payload) });
+    clearTimeout(id);
+    const json = await res.json();
+    if(json?.candidates?.length){
+      const text = json.candidates.map(c => c.content?.parts?.map(p=>p.text).join("") ).join("\n");
+      appendProcLog("Gemini OK");
+      return text;
+    } else if(json?.error){
+      appendProcLog("Gemini API error: " + json.error.message);
+      return `⚠️ API Error: ${json.error.message}`;
+    } else {
+      appendProcLog("Gemini responded with no candidates");
+      return "⚠️ No response from Gemini";
+    }
+  }catch(err){
+    appendProcLog("Gemini call failed: " + (err.message||err));
+    return "⚠️ Connection error: " + (err.message || "");
+  }
+}
+
+/* =========================
+   JSON Extraction & Validation (zod)
+   ========================= */
+let zod = null;
+async function ensureZod(){
+  if(zod) return zod;
+  try{
+    const mz = await import('https://esm.sh/zod@3.23.2');
+    zod = mz;
+    return zod;
+  }catch(e){
+    appendProcLog("Zod import failed, will use naive JSON parse");
+    zod = null;
+    return null;
+  }
+}
+
+function extractJSON(text){
+  if(!text) return null;
+  const start = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if(start === -1 || last === -1 || last <= start) return null;
+  const candidate = text.slice(start, last+1);
+  try { return JSON.parse(candidate); } catch(e){
+    // sanitize quotes
+    const sanitized = candidate.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+    try { return JSON.parse(sanitized); } catch(e2){ return null; }
+  }
+}
+
+/* =========================
+   Plan / Implement / Test / Fix schemas (zod)
+   Use zod where possible, else fall back to structural checks.
+   ========================= */
+let SCHEMAS = null;
+async function loadSchemas(){
+  const mz = await ensureZod();
+  if(mz){
+    const { z } = mz;
+    const Step = z.object({
+      id: z.number(),
+      title: z.string(),
+      description: z.string().optional(),
+      deliverable: z.string().optional(),
+      estimated_minutes: z.number().optional()
+    });
+    const Plan = z.object({
+      stage: z.literal("plan"),
+      idea: z.string(),
+      steps: z.array(Step),
+      next: z.string()
+    });
+    const Implement = z.object({
+      stage: z.literal("implement"),
+      step_id: z.number(),
+      files: z.array(z.object({ path: z.string(), content: z.string() })),
+      notes: z.string().optional(),
+      next: z.string()
+    });
+    const Test = z.object({
+      stage: z.literal("test"),
+      issues: z.array(z.object({ file: z.string(), line: z.number().optional(), message: z.string() })).optional(),
+      next: z.string().optional(),
+      finished: z.boolean().optional()
+    });
+    const Fix = z.object({
+      stage: z.literal("fix"),
+      files: z.array(z.object({ path: z.string(), content: z.string() })),
+      notes: z.string().optional(),
+      next: z.string().optional()
+    });
+    SCHEMAS = { z, Plan, Implement, Test, Fix };
+  } else {
+    SCHEMAS = null;
+  }
+}
+
+/* =========================
+   AI Orchestrator (plan → implement → test → fix → finish)
+   ========================= */
+async function generatePlan(idea){
+  const prompt = `You are a senior engineer. Receive the idea:
+"${idea}"
+Return ONLY JSON (no extra text). Schema:
+{
+  "stage":"plan",
+  "idea":"short idea",
+  "steps":[{"id":1,"title":"", "description":"", "deliverable":"", "estimated_minutes": 10}],
+  "next":"implement"
+}`;
+  const raw = await geminiCall(prompt);
+  appendAI(raw);
+  const parsed = extractJSON(raw);
+  if(!parsed){ appendProcLog("Plan parsing failed; using fallback simple plan"); parsed = null; }
+  // validate
+  await loadSchemas();
+  if(SCHEMAS && parsed){
+    try{
+      const ok = SCHEMAS.Plan.parse(parsed);
+      state.plan = ok;
+      showPlan(ok);
+      appendProcLog("Plan JSON validated.");
+      return ok;
+    }catch(e){
+      appendProcLog("Plan validation failed: " + e.message);
+      // still accept parsed if possible
+      state.plan = parsed;
+      showPlan(parsed);
+      return parsed;
+    }
+  } else {
+    // fallback naive plan
+    if(!parsed){
+      state.plan = {
+        stage: "plan",
+        idea,
+        steps: [
+          { id:1, title:"Scaffold UI", description:"Basic HTML/CSS/JS", deliverable:"index.html, app.js, style.css"},
+          { id:2, title:"Core logic", description:"Main feature JS", deliverable:"app.js"},
+          { id:3, title:"Polish", description:"Styles & fixes", deliverable:"style.css"}
+        ],
+        next: "implement"
+      };
+      showPlan(state.plan);
+      return state.plan;
+    } else {
+      state.plan = parsed; showPlan(parsed); return parsed;
+    }
+  }
+}
+
+async function implementNextStep(){
+  if(!state.plan || !state.plan.steps) throw new Error("No plan available");
+  // find next undone step (we mark done via step.done)
+  const next = state.plan.steps.find(s=>!s.done);
+  if(!next) { appendProcLog("No remaining steps"); return { finished:true }; }
+  appendProcLog(`Asking AI to implement step ${next.id}: ${next.title}`);
+  const prompt = `You are an expert developer. Implement step ${next.id} ("${next.title}") in our project. Return ONLY JSON with schema:
+{
+  "stage":"implement",
+  "step_id": <number>,
+  "files": [{"path":"index.html","content":"<full file content>"}],
+  "notes":"short notes",
+  "next":"test"
+}
+Project files snapshot keys: ${Object.keys(state.files).join(", ")}`;
+  const raw = await geminiCall(prompt);
+  appendAI(raw);
+  const parsed = extractJSON(raw);
+  if(!parsed){ appendProcLog("Implement parse failed"); return null; }
+  // validate & apply
+  if(SCHEMAS){
+    try{
+      const ok = SCHEMAS.Implement.parse(parsed);
+      // apply files
+      ok.files.forEach(f => { state.files[f.path] = f.content; appendProcLog("Wrote " + f.path); });
+      if(ok.step_id){
+        const step = state.plan.steps.find(s=>s.id===ok.step_id); if(step) step.done = true;
+      }
+      await persist();
+      renderPreview();
+      return ok;
+    }catch(e){
+      appendProcLog("Implement validation failed: " + e.message);
+      return parsed;
+    }
+  } else {
+    // naive apply
+    parsed.files?.forEach(f=>{ state.files[f.path] = f.content; appendProcLog("Wrote " + f.path); });
+    if(parsed.step_id){ const step = state.plan.steps.find(s=>s.id===parsed.step_id); if(step) step.done = true; }
+    await persist(); renderPreview(); return parsed;
+  }
+}
+
+async function testProject(){
+  appendProcLog("AI running static QA check on project");
+  const prompt = `You are QA. Analyze the codebase for obvious issues and return ONLY JSON:
+{
+  "stage":"test",
+  "issues":[{"file":"index.html","line":0,"message":"..."}],
+  "next":"fix"|"finish",
+  "finished": false
+}
+Files snapshot: keys: ${Object.keys(state.files).join(", ")}`;
+  const raw = await geminiCall(prompt);
+  appendAI(raw);
+  const parsed = extractJSON(raw);
+  if(!parsed){ appendProcLog("Test parse failed; assuming issues present"); return { issues:[{file:"app.js",message:"Could not parse test output"}], next:"fix" }; }
+  if(SCHEMAS){
+    try{
+      const ok = SCHEMAS.Test.parse(parsed);
+      return ok;
+    }catch(e){
+      appendProcLog("Test validation failed: " + e.message);
+      return parsed;
+    }
+  } else return parsed;
+}
+
+async function fixIssues(issues){
+  appendProcLog("Asking AI to fix issues: " + JSON.stringify(issues));
+  const prompt = `You are a senior developer. Fix the following issues and return ONLY JSON:
+{
+  "stage":"fix",
+  "files":[{"path":"<string>","content":"<full content>"}],
+  "notes":"what you fixed",
+  "next":"test"
+}
+Issues: ${JSON.stringify(issues)}.
+Files snapshot keys: ${Object.keys(state.files).join(", ")}`;
+  const raw = await geminiCall(prompt);
+  appendAI(raw);
+  const parsed = extractJSON(raw);
+  if(!parsed){ appendProcLog("Fix parse failed"); return null; }
+  if(SCHEMAS){
+    try{
+      const ok = SCHEMAS.Fix.parse(parsed);
+      ok.files.forEach(f=>{ state.files[f.path] = f.content; appendProcLog("Fixed " + f.path); });
+      await persist(); renderPreview(); return ok;
+    }catch(e){
+      appendProcLog("Fix validation failed: " + e.message);
+      return parsed;
+    }
+  } else {
+    parsed.files?.forEach(f=>{ state.files[f.path] = f.content; appendProcLog("Fixed " + f.path); });
+    await persist(); renderPreview(); return parsed;
+  }
+}
+
+/* =========================
+   Orchestrator loop (full)
+   ========================= */
+async function runAiLoop(){
+  try{
+    await ensureApiKey(); // prompt or input
+  }catch(e){
+    alert("Gemini API key required to run AI loop.");
+    return;
+  }
+  await loadSchemas();
+  if(!state.plan){
+    const idea = (ideaInputEl.value||"").trim();
+    if(!idea){ alert("Enter idea first"); return; }
+    await generatePlan(idea);
+  }
+  // boot sandboxes
+  await bootPySafely();
+  await bootWebContainerSafely();
+
+  state.cycles = 0;
+  state.finished = false;
+  appendProcLog("Starting AI loop");
+  while(state.cycles < CONFIG.MAX_CYCLES && !state.finished){
+    state.cycles++;
+    appendProcLog(`Cycle ${state.cycles} start`);
+    try{
+      const impl = await implementNextStep();
+      const test = await testProject();
+      if(test?.finished === true || test?.next === "finish"){
+        state.finished = true;
+        appendProcLog("AI declared finished.");
+        appendAI("✅ Finished. Project ready.");
+        writeln("✔️ Project finished by AI.");
+        break;
+      }
+      const issues = test?.issues || [];
+      if(issues.length > 0){
+        appendProcLog(`Issues found: ${issues.length}`);
+        await fixIssues(issues);
+      } else {
+        appendProcLog("No issues found this cycle; moving to next step or finalizing.");
+        // mark any remaining step as done if AI didn't
+        if(state.plan && state.plan.steps){
+          const nextStep = state.plan.steps.find(s=>!s.done);
+          if(!nextStep){
+            // Ask AI to finalize
+            const fin = await geminiCall(`All plan steps implemented. Confirm completion. Return JSON {"finished": true} or {"finished": false, "remaining": ["..."]}`);
+            appendAI(fin);
+            const fjson = extractJSON(fin);
+            if(fjson?.finished) { state.finished = true; appendProcLog("Finalized by AI"); break; }
+          }
+        }
+      }
+    }catch(err){
+      appendProcLog("Cycle error: " + (err.message||err));
+    }
+  }
+
+  if(!state.finished) appendProcLog("Stopped: reached max cycles or not finished");
+}
+
+/* =========================
+   PYODIDE boot (safe)
+   ========================= */
+async function bootPySafely(){
+  try{
+    if(state.pyodide?.ready) return;
+    appendProcLog("Booting Pyodide...");
+    state.pyodide.instance = await loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.1/full/" });
+    state.pyodide.ready = true;
+    pyDot.className = "status-dot ok";
+    writeln("Python sandbox ready");
+  }catch(e){
+    pyDot.className = "status-dot err";
+    appendProcLog("Pyodide boot failed: " + (e.message||e));
+  }
+}
+
+/* =========================
+   WebContainers boot (safe dynamic import)
+   ========================= */
+async function bootWebContainerSafely(){
+  if(state.webcontainer.available) return;
+  try{
+    appendProcLog("Loading WebContainer (if available)...");
+    // dynamic import of webcontainer api
+    let WCmod = null;
+    try{
+      WCmod = await import('https://cdn.jsdelivr.net/npm/@webcontainer/api@1.3.0/dist/index.min.js');
+    }catch(e){
+      appendProcLog("WebContainer import failed or blocked; Node sandbox not available.");
+      nodeDot.className = "status-dot err";
+      state.webcontainer.available = false;
+      return;
+    }
+    const { WebContainer } = WCmod;
+    state.webcontainer.instance = await WebContainer.boot();
+    state.webcontainer.available = true;
+    nodeDot.className = "status-dot ok";
+    writeln("Node sandbox (WebContainer) ready");
+    // write files to webcontainer fs
+    await syncFilesToWebContainer();
+  }catch(e){
+    appendProcLog("WebContainer boot error: " + (e.message||e));
+    nodeDot.className = "status-dot err";
+    state.webcontainer.available = false;
+  }
+}
+
+async function syncFilesToWebContainer(){
+  if(!state.webcontainer.available || !state.webcontainer.instance) return;
+  try{
+    const fs = state.webcontainer.instance.fs;
+    // ensure directories not implemented — write flat files
+    for(const [path, content] of Object.entries(state.files)){
+      await fs.writeFile(path, new TextEncoder().encode(content));
+    }
+    if(!state.files["package.json"]){
+      const pkg = { name:"ai-ide-project", type:"module", scripts:{ start:"node app.js" } };
+      await state.webcontainer.instance.fs.writeFile("package.json", new TextEncoder().encode(JSON.stringify(pkg,null,2)));
+    }
+    appendProcLog("Synced files to WebContainer FS");
+  }catch(e){ appendProcLog("Sync to WebContainer failed: " + (e.message||e)); }
+}
+
+async function runNodeScript(cmd){
+  if(!state.webcontainer.available) { appendProcLog("Node sandbox not available"); return; }
+  try{
+    await syncFilesToWebContainer();
+    const proc = await state.webcontainer.instance.spawn("bash", ["-lc", cmd]);
+    readStream(proc.output, d => {
+      state.term.write(d);
+    });
+    proc.exit.then(code => appendProcLog(`Process exited with ${code}`));
+  }catch(e){ appendProcLog("Run node error: " + (e.message||e)); }
+}
+
+function readStream(stream, onData){
+  const reader = stream.getReader();
+  (async function pump(){
+    try{
+      while(true){
+        const { value, done } = await reader.read();
+        if(done) break;
+        if(value) onData(new TextDecoder().decode(value));
+      }
+    }catch(e){
+      appendProcLog("Stream read error: " + (e.message||e));
+    }
+  })();
+}
+
+/* =========================
+   SIMPLE UI HOOKS
+   ========================= */
+document.getElementById("btnNewFile").addEventListener("click", ()=>{
+  const name = prompt("New file name (e.g. util.js)");
+  if(!name) return;
+  if(state.files[name]) return alert("File exists");
+  state.files[name] = "";
+  showFiles();
+  openFile(name);
+  persist();
+});
+document.getElementById("btnExport").addEventListener("click", ()=>{
+  const blob = new Blob([JSON.stringify(state.files,null,2)], { type:'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'project.json'; a.click();
+  appendProcLog("Exported project");
+});
+document.getElementById("btnSave").addEventListener("click", ()=>{
+  saveCurrentEditorFile();
+  persist();
+});
+document.getElementById("btnClear").addEventListener("click", ()=>{ procLogEl.textContent = ""; aiChatEl.textContent=""; });
+document.getElementById("btnPlan").addEventListener("click", async ()=>{
+  const idea = (ideaInputEl.value||"").trim();
+  if(!idea) return alert("Write an idea first");
+  await generatePlan(idea);
+});
+document.getElementById("btnRun").addEventListener("click", ()=>{ runAiLoop(); });
+
+function saveCurrentEditorFile(){
+  if(!state.editor) return;
+  const value = state.editor.getValue();
+  state.files[state.currentFile] = value;
+  appendProcLog("Saved " + state.currentFile);
+  persist();
+  renderPreview();
+}
+
+/* =========================
+   Convenience: quick python runner
+   ========================= */
+async function runPythonSnippet(pycode){
+  await bootPySafely();
+  try{
+    const result = await state.pyodide.instance.runPythonAsync(pycode);
+    state.term.writeln(String(result ?? ""));
+  }catch(e){
+    state.term.writeln("Python error: " + (e.message||e));
+  }
+}
+
+/* =========================
+   INITIALIZE UI, editor, term, restore state
+   ========================= */
+async function init(){
+  try{
+    await restore();
+  }catch(err){ appendProcLog("Restore error: "+err.message); }
+
+  // show files
+  showFiles();
+
+  // mount monaco into editor div
+  const editorDiv = document.getElementById("editor");
+  // create wrapper child element that Monaco will attach to
+  const monWrapper = document.createElement("div");
+  monWrapper.style.height = "100%";
+  monWrapper.style.width = "100%";
+  editorDiv.appendChild(monWrapper);
+
+  try{
+    await mountMonaco(monWrapper);
+  }catch(e){
+    appendProcLog("Monaco load failed: " + (e.message||e));
+    editorDiv.innerHTML = "<div style='color:var(--muted)'>Editor failed to load</div>";
+  }
+
+  // terminal
+  mountTerminal(document.getElementById("term"));
+
+  // split panes resizable
+  try{
+    Split(['.top-split > .panel:nth-child(1)', '.top-split > .panel:nth-child(2)', '.top-split > .panel:nth-child(3)'], { sizes:[18,50,32], minSize: 220, gutterSize:8 });
+    Split(['.bottom-split > .panel:nth-child(1)', '.bottom-split > .panel:nth-child(2)'], { direction:'horizontal', sizes:[65,35], minSize:200, gutterSize:8 });
+  }catch(e){ /* ignore */ }
+
+  // pre-boot py & webcontainer in background (non-blocking)
+  bootPySafely();
+  bootWebContainerSafely();
+  appendProcLog("UI ready. Enter idea and press Plan or Run AI Loop.");
+}
+
+// run init
+await init();
+
+})(); // end IIFE
+</script>
+</body>
+</html>
