@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RUKÉ</title>
+  <script>
+    function toggleMenu() {
+      let nav = document.getElementById("navMenu");
+      nav.style.display = (nav.style.display === "flex") ? "none" : "flex";
+    }
+  </script>
+</head>
+<body style="margin:0;font-family:Poppins, sans-serif;color:#222;overflow-x:hidden;scroll-behavior:smooth;">
+
+  <!-- HEADER -->
+  <header style="background:rgba(255,255,255,0.9);position:fixed;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;padding:0.6rem 1rem;box-shadow:0 2px 8px rgba(0,0,0,0.1);backdrop-filter:blur(6px);">
+    <div style="display:flex;align-items:center;gap:0.6rem;">
+      <img src="/scroll1.jpg" alt="logo" style="height:2.5rem;width:2.5rem;border-radius:50%;object-fit:cover;">
+    </div>
+    <h1 style="flex:1;text-align:center;font-size:1.5rem;letter-spacing:1px;margin:0;">RUKÉ</h1>
+    <button onclick="toggleMenu()" style="background:#222;border:none;color:white;font-size:1.4rem;width:2.5rem;height:2.5rem;border-radius:6px;cursor:pointer;display:none;">☰</button>
+  </header>
+
+  <!-- NAV -->
+  <nav id="navMenu" style="margin-top:3.6rem;display:flex;justify-content:center;gap:2rem;padding:0.8rem;background:rgba(250,250,250,0.85);position:sticky;top:3.5rem;z-index:900;flex-wrap:wrap;">
+    <a href="#home" style="text-decoration:none;color:#333;font-weight:600;">Home</a>
+    <a href="#shop" style="text-decoration:none;color:#333;font-weight:600;">Shop</a>
+    <a href="#careers" style="text-decoration:none;color:#333;font-weight:600;">Careers</a>
+    <a href="#about" style="text-decoration:none;color:#333;font-weight:600;">About</a>
+  </nav>
+
+  <!-- PARALLAX SECTIONS -->
+  <section style="height:100vh;background:url('/scroll.jpg') center/cover fixed;display:flex;align-items:center;justify-content:center;color:white;font-size:2.5rem;font-weight:bold;position:relative;text-align:center;">
+    <div style="position:relative;z-index:2;">Welcome to RUKÉ</div>
+    <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);"></div>
+  </section>
+
+  <section id="home" style="padding:4rem 2rem;text-align:center;background:#fffaf0;">
+    <h2 style="font-size:2rem;margin-bottom:1rem;color:#444;">Our Products</h2>
+    <p style="max-width:700px;margin:auto;font-size:1.1rem;line-height:1.6;color:#555;">Discover our premium collection crafted with love and care.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:2rem;margin-top:3rem;">
+      <div style="background:white;border-radius:12px;overflow:hidden;box-shadow:0 5px 15px rgba(0,0,0,0.1);">
+        <img src="/scroll.jpg" style="width:100%;height:200px;object-fit:cover;">
+        <h3 style="margin:1rem;font-size:1.2rem;">Luxury Bag</h3>
+        <p style="margin:0 1rem 1rem;color:#555;">Elegant handcrafted bag for daily use.</p>
+      </div>
+      <div style="background:white;border-radius:12px;overflow:hidden;box-shadow:0 5px 15px rgba(0,0,0,0.1);">
+        <img src="/scroll1.jpg" style="width:100%;height:200px;object-fit:cover;">
+        <h3 style="margin:1rem;font-size:1.2rem;">Designer Shoes</h3>
+        <p style="margin:0 1rem 1rem;color:#555;">Comfort meets style in our premium footwear.</p>
+      </div>
+      <div style="background:white;border-radius:12px;overflow:hidden;box-shadow:0 5px 15px rgba(0,0,0,0.1);">
+        <img src="/scroll.jpg" style="width:100%;height:200px;object-fit:cover;">
+        <h3 style="margin:1rem;font-size:1.2rem;">Classic Watch</h3>
+        <p style="margin:0 1rem 1rem;color:#555;">Timeless designs with modern durability.</p>
+      </div>
+    </div>
+  </section>
+
+  <section style="height:100vh;background:url('/scroll1.jpg') center/cover fixed;display:flex;align-items:center;justify-content:center;color:white;font-size:2.5rem;font-weight:bold;position:relative;text-align:center;">
+    <div style="position:relative;z-index:2;">Shop With Us</div>
+    <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);"></div>
+  </section>
+
+  <section id="shop" style="padding:4rem 2rem;text-align:center;background:#fff;">
+    <h2 style="font-size:2rem;margin-bottom:1rem;color:#444;">Shop</h2>
+    <p style="max-width:700px;margin:auto;font-size:1.1rem;line-height:1.6;color:#555;">Explore our wide range of exclusive products.</p>
+  </section>
+
+  <section style="height:100vh;background:url('/scroll.jpg') center/cover fixed;display:flex;align-items:center;justify-content:center;color:white;font-size:2.5rem;font-weight:bold;position:relative;text-align:center;">
+    <div style="position:relative;z-index:2;">Join Our Team</div>
+    <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);"></div>
+  </section>
+
+  <section id="careers" style="padding:4rem 2rem;text-align:center;background:#fffaf0;">
+    <h2 style="font-size:2rem;margin-bottom:1rem;color:#444;">Careers</h2>
+    <p style="max-width:700px;margin:auto;font-size:1.1rem;line-height:1.6;color:#555;">Be a part of our growing family and innovate with us.</p>
+  </section>
+  
+  
+  
+  
+  
+  
+  
+  <section style="height:100vh;background:url('/scroll.jpg') center/cover fixed;display:flex;align-items:center;justify-content:center;color:white;font-size:2.5rem;font-weight:bold;position:relative;text-align:center;">
+    <div style="position:relative;z-index:2;"> AQUIRING  FRESH MINDS </div>
+    <div style="position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);"></div>
+  </section>
+
+
+  
+  
+   <section id="testimonials" style="padding:4rem 2rem;text-align:center;background:#fffaf0;">
+    <h2 style="font-size:2rem;margin-bottom:1rem;color:#444;">Testimonials</h2>
+    <p style="max-width:700px;margin:auto;font-size:1.1rem;line-height:1.6;color:#555;">Provide a feedback with us .</p>
+  </section>
+
+  
+  
+  
+  
+
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  <!-- FOOTER -->
+  <footer id="about" style="background:#111;color:#ddd;text-align:center;padding:3rem 1rem;margin-top:2rem;">
+    <h2 style="margin-bottom:1rem;font-size:1.5rem;color:white;">RUKÉ</h2>
+    <p style="margin-bottom:1rem;">Explore our pages:</p>
+    <div style="margin-bottom:1.5rem;">
+      <a href="#home" style="margin:0 0.8rem;text-decoration:none;color:#ccc;">Home</a>
+      <a href="#shop" style="margin:0 0.8rem;text-decoration:none;color:#ccc;">Shop</a>
+      <a href="#careers" style="margin:0 0.8rem;text-decoration:none;color:#ccc;">Careers</a>
+      <a href="#about" style="margin:0 0.8rem;text-decoration:none;color:#ccc;">About</a>
+    </div>
+    <div style="margin-bottom:1.5rem;">
+      <button style="margin:0.3rem;padding:0.6rem 1.2rem;background:#333;color:white;border:none;border-radius:6px;cursor:pointer;">Instagram</button>
+      <button style="margin:0.3rem;padding:0.6rem 1.2rem;background:#333;color:white;border:none;border-radius:6px;cursor:pointer;">Facebook</button>
+      <button style="margin:0.3rem;padding:0.6rem 1.2rem;background:#333;color:white;border:none;border-radius:6px;cursor:pointer;">Twitter</button>
+      <button style="margin:0.3rem;padding:0.6rem 1.2rem;background:#333;color:white;border:none;border-radius:6px;cursor:pointer;">Discord</button>
+    </div>
+    <small style="color:#888;">© All rights reserved RUKÉ 2025</small>
+  </footer>
+
+  <!-- MOBILE RESPONSIVE -->
+<script>
+  function checkWidth() {
+    if (window.innerWidth < 768) {
+      document.querySelector("header button").style.display = "block";
+      let nav = document.getElementById("navMenu");
+      nav.style.display = "none";
+      nav.style.flexDirection = "column";
+      nav.style.alignItems = "center";
+    } else {
+      document.querySelector("header button").style.display = "none";
+      let nav = document.getElementById("navMenu");
+      nav.style.display = "flex";
+      nav.style.flexDirection = "row";
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", checkWidth);
+  window.addEventListener("resize", checkWidth);
+</script>
+
+</body>
+        </html>
