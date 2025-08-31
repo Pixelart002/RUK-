@@ -2,28 +2,51 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Hello Android Notification</title>
+  <title>Web Push Demo</title>
 </head>
 <body>
-  <h2>Android Hello Notification Demo</h2>
+  <button id="subscribeBtn">Subscribe for Push</button>
 
   <script>
-    async function showHello() {
-      if (Notification.permission === "default") {
-        await Notification.requestPermission();
-      }
-      if (Notification.permission === "granted") {
-        new Notification("Hello 👋", {
-          body: "This is Android Notification test!",
-          icon: "https://cdn-icons-png.flaticon.com/512/25/25231.png"
+    // Inline service worker for push
+    const swCode = `
+      self.addEventListener("push", function(event) {
+        const data = event.data ? event.data.text() : "Hello from Push!";
+        event.waitUntil(
+          self.registration.showNotification("Push Message", {
+            body: data,
+            icon: "https://cdn-icons-png.flaticon.com/512/25/25694.png"
+          })
+        );
+      });
+    `;
+    const blob = new Blob([swCode], { type: "application/javascript" });
+    const swUrl = URL.createObjectURL(blob);
+
+    async function register() {
+      const reg = await navigator.serviceWorker.register(swUrl);
+      console.log("SW registered", reg);
+
+      document.getElementById("subscribeBtn").onclick = async () => {
+        // Request permission
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          alert("Permission denied");
+          return;
+        }
+
+        // Subscribe user
+        const subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: "<Your VAPID Public Key Here>"
         });
-      } else {
-        alert("Notification blocked!");
-      }
+
+        console.log("Push subscription:", JSON.stringify(subscription));
+        alert("Subscribed! Send this subscription to your server.");
+      };
     }
 
-    // Page load hote hi Hello bhejo
-    window.onload = showHello;
+    register();
   </script>
 </body>
 </html>
