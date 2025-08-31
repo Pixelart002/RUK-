@@ -2,51 +2,34 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Web Push Demo</title>
+  <title>My Own Notification</title>
 </head>
 <body>
-  <button id="subscribeBtn">Subscribe for Push</button>
+  <h1>Client-Side Notification Demo</h1>
+  <button id="notifyBtn">Show Notification</button>
 
   <script>
-    // Inline service worker for push
-    const swCode = `
-      self.addEventListener("push", function(event) {
-        const data = event.data ? event.data.text() : "Hello from Push!";
-        event.waitUntil(
-          self.registration.showNotification("Push Message", {
-            body: data,
-            icon: "https://cdn-icons-png.flaticon.com/512/25/25694.png"
-          })
-        );
+    // ✅ Register Service Worker
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("sw.js").then(() => {
+        console.log("Service Worker registered");
       });
-    `;
-    const blob = new Blob([swCode], { type: "application/javascript" });
-    const swUrl = URL.createObjectURL(blob);
-
-    async function register() {
-      const reg = await navigator.serviceWorker.register(swUrl);
-      console.log("SW registered", reg);
-
-      document.getElementById("subscribeBtn").onclick = async () => {
-        // Request permission
-        const permission = await Notification.requestPermission();
-        if (permission !== "granted") {
-          alert("Permission denied");
-          return;
-        }
-
-        // Subscribe user
-        const subscription = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: "<Your VAPID Public Key Here>"
-        });
-
-        console.log("Push subscription:", JSON.stringify(subscription));
-        alert("Subscribed! Send this subscription to your server.");
-      };
     }
 
-    register();
+    // ✅ Button click → show notification
+    document.getElementById("notifyBtn").addEventListener("click", async () => {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        navigator.serviceWorker.ready.then(reg => {
+          reg.showNotification("Hello!", {
+            body: "This is your own notification 🚀",
+            icon: "https://via.placeholder.com/128" // optional
+          });
+        });
+      } else {
+        alert("Notifications are blocked!");
+      }
+    });
   </script>
 </body>
 </html>
