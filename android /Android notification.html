@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ultra Safe Notification Demo</title>
+</head>
+<body>
+  <button id="notifyBtn">Send Notification</button>
+
+  <!-- Service Worker code hidden -->
+  <script id="sw-code" type="javascript/worker">
+    self.addEventListener("install", () => {
+      self.skipWaiting();
+    });
+
+    self.addEventListener("activate", (event) => {
+      event.waitUntil(self.clients.claim());
+    });
+
+    self.addEventListener("push", (event) => {
+      const data = event.data ? event.data.text() : "Default push message";
+      event.waitUntil(
+        self.registration.showNotification("Push Notification", {
+          body: data,
+          icon: "https://cdn-icons-png.flaticon.com/512/25/25694.png"
+        })
+      );
+    });
+  </script>
+
+  <script>
+    // Convert <script> text to a real JS file and register
+    async function registerSW() {
+      const swBlob = new Blob(
+        [document.querySelector("#sw-code").textContent],
+        { type: "application/javascript" }
+      );
+      const swUrl = URL.createObjectURL(swBlob);
+
+      try {
+        const reg = await navigator.serviceWorker.register(swUrl);
+        console.log("✅ Service Worker registered", reg);
+      } catch (err) {
+        console.error("❌ SW registration failed", err);
+      }
+    }
+
+    // Init
+    if ("serviceWorker" in navigator && "Notification" in window) {
+      registerSW();
+    }
+
+    // Button click -> ask permission + show notification
+    document.getElementById("notifyBtn").addEventListener("click", async () => {
+      if (Notification.permission === "default") {
+        await Notification.requestPermission();
+      }
+      if (Notification.permission === "granted") {
+        new Notification("Hello 👋", {
+          body: "Ultra safe single-file notification success!"
+        });
+      } else {
+        alert("Notification permission denied!");
+      }
+    });
+  </script>
+</body>
+</html>
