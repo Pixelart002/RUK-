@@ -5,53 +5,45 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fetch Profile</title>
 <style>
-  body { font-family: Arial, sans-serif; background: #f0f0f0; padding: 30px; }
-  form { background: #fff; padding: 20px; border-radius: 8px; max-width: 400px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.1);}
-  input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 4px; border: 1px solid #ccc; }
-  button { padding: 10px 20px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer; }
-  pre { background: #eee; padding: 10px; border-radius: 4px; overflow-x: auto; }
+  body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+  form { background: #fff; padding: 20px; border-radius: 8px; max-width: 400px; margin: auto; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+  input { width: 100%; padding: 8px; margin: 10px 0; }
+  button { padding: 10px 15px; background: #007BFF; color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+  button:hover { background: #0056b3; }
+  pre { background: #eee; padding: 10px; border-radius: 5px; margin-top: 20px; }
 </style>
 </head>
 <body>
 
 <h2>Fetch Profile</h2>
 <form id="profileForm">
-  <label>Username:</label>
-  <input type="text" id="username" value="Kyro" required>
-
-  <label>Password:</label>
-  <input type="password" id="password" value="123456" required>
-
-  <label>Bearer Token:</label>
-  <input type="text" id="token" value="b4ed1d74-f7db-4667-b1bd-7604d47193e8" required>
-
+  <label for="token">Bearer Token:</label>
+  <input type="text" id="token" name="token" placeholder="Enter your token" required value="df14a082-245b-4c9a-8136-98f470edeab2">
+  
   <button type="submit">Get Profile</button>
 </form>
 
-<h3>Response:</h3>
-<pre id="response"></pre>
+<pre id="response">Response will appear here...</pre>
 
 <script>
-document.getElementById('profileForm').addEventListener('submit', async function(e){
+document.getElementById('profileForm').addEventListener('submit', async (e) => {
   e.preventDefault();
-
-  const username = encodeURIComponent(document.getElementById('username').value);
-  const password = encodeURIComponent(document.getElementById('password').value);
-  const token = document.getElementById('token').value;
-
-  // GET request with query parameters
-  const url = `https://universal-hilde-pixelart002-64da3a19.koyeb.app/profile/me?username=${username}&password=${password}`;
+  const token = document.getElementById('token').value.trim();
 
   try {
-    const res = await fetch(url, {
+    const res = await fetch('https://universal-hilde-pixelart002-64da3a19.koyeb.app/session/me', {
       method: 'GET',
       headers: {
-        'Authorization': 'Bearer ' + token
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
       }
     });
 
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' - ' + res.statusText);
     const data = await res.json();
-    document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+
+    document.getElementById('response').textContent = 
+      `UID: ${data.uid}\nUsername: ${data.username}\n\nFull JSON:\n${JSON.stringify(data, null, 2)}`;
   } catch (err) {
     document.getElementById('response').textContent = 'Error: ' + err;
   }
